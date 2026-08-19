@@ -10,13 +10,18 @@ import {
   createWindow, attachApp, detachApp, setAppBounds, setAppVisible,
   reloadApp, focusWindow, getShellContents, getWindow, captureViews,
 } from './window/shell-window.ts'
-import { createTray, refreshTray } from './window/tray.ts'
+import { createTray, refreshTray, setUpdateReport } from './window/tray.ts'
+import * as updates from './update/index.ts'
 import { loadConfig } from './config/store.ts'
 import type { AppInfo, OpResult, Rect } from '@shared/ipc'
 
 const SMOKE = process.argv.includes('--smoke-test')
 /** --capture=<前缀>：把两个 view 各抓一张 PNG 后退出（开发期验证渲染用） */
 const CAPTURE = process.argv.find((a) => a.startsWith('--capture='))?.slice('--capture='.length) ?? null
+/** --panel=<id>：抓图前先切到指定面板，用来验证某个面板的渲染 */
+const PANEL = process.argv.find((a) => a.startsWith('--panel='))?.slice('--panel='.length) ?? null
+/** --capture-delay=<毫秒>：抓图前等多久，等异步数据（如更新检查）落地 */
+const CAPTURE_DELAY = Number(process.argv.find((a) => a.startsWith('--capture-delay='))?.slice('--capture-delay='.length) ?? '3000')
 
 // ─── 单实例 ──────────────────────────────────────────────────────────────────
 if (!app.requestSingleInstanceLock()) {
@@ -66,6 +71,13 @@ function registerIpc(): void {
   ipcMain.handle('backend:stop', () => guard(() => { backend.stop(); detachApp() }))
 
   ipcMain.handle('log:tail', (_e, limit: number) => tail(limit))
+
+  ipcMain.handle('update:state', () => updates.getReport())
+  ipcMain.handle('update:check', () => guard(() => updates.checkAll({ force: true, reason: '面板手动' })))
+  ipcMain.handle('update:upgradeCli', () => guard(() => updates.upgradeCli()))
+  ipcMain.handle('update:pullSourceRepo', () => guard(() => updates.pullSourceRepo()))
+  ipcMain.handle('update:appDownload', () => guard(() => updates.downloadApp()))
+  ipcMain.handle('update:appInstall', () => guard(() => updates.installApp()))
 }
 
 /**
@@ -112,6 +124,12 @@ async function main(): Promise<void> {
   })
   onLine((line) => { getShellContents()?.send('log:line', line) })
 
+  updates.onChange((r) => {
+    getShellContents()?.send('update:changed', r)
+    setUpdateReport(r)
+  })
+  updates.start()
+
   try {
     const url = await backend.start()
     log(`后端就绪：${url}`)
@@ -121,6 +139,10 @@ async function main(): Promise<void> {
       setTimeout(() => app.quit(), 2_000)
     }
     if (CAPTURE !== null) {
+      if (PANEL !== null) getShellContents()?.send('nav:goto', { panel: PANEL })
+      // 抓图模式下立刻跑一轮，不等 20s 定时器 —— 等太久显示器会休眠，
+      // 届时 capturePage 会报 "Current display surface not available for capture"
+      void updates.checkAll({ reason: '抓图模式预热' })
       // 等一帧渲染完再抓，否则可能抓到还没上色的空白
       setTimeout(() => {
         void captureViews(CAPTURE).then((files) => {
@@ -130,7 +152,7 @@ async function main(): Promise<void> {
           log(`抓图失败：${String(e)}`, 'stderr')
           app.quit()
         })
-      }, 3_000)
+      }, Number.isFinite(CAPTURE_DELAY) ? CAPTURE_DELAY : 3_000)
     }
   } catch (e) {
     // 起不来也要留着窗口 —— 外壳会显示失败原因与日志，比一个错误弹窗有用得多
@@ -162,7 +184,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit()
 })
 
-app.on('will-quit', () => { closeLog() })
+app.on('will-quit', () => {
+  updates.stop()
+  closeLog()
+})
 
 process.on('uncaughtException', (err) => {
   log(`主进程未捕获异常：${err.stack ?? err.message}`, 'stderr')

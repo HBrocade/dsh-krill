@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BackendStatus } from '@shared/ipc'
 import { Sidebar, type PanelId } from './components/Sidebar.tsx'
 import { LogsPanel } from './panels/LogsPanel.tsx'
+import { UpdatesPanel } from './panels/UpdatesPanel.tsx'
 import { Placeholder } from './panels/Placeholder.tsx'
 
 export function App(): React.JSX.Element {
@@ -48,7 +49,7 @@ export function App(): React.JSX.Element {
       <div className="main">
         {panel === 'chat' ? <div className="app-slot" ref={slotRef} /> : null}
         {panel === 'logs' ? <LogsPanel /> : null}
-        {panel === 'updates' ? <Placeholder title="更新中心" phase="P2" /> : null}
+        {panel === 'updates' ? <UpdatesPanel /> : null}
         {panel === 'plugins' ? <Placeholder title="插件管理" phase="P3" /> : null}
         {panel === 'bridge' ? <Placeholder title="桥接接口" phase="P4" /> : null}
         {panel === 'vision' ? <Placeholder title="多模态控制台" phase="P5" /> : null}

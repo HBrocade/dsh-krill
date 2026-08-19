@@ -78,12 +78,24 @@ export interface CliUpdate {
   error: string | null
 }
 
+/**
+ * 一个包的来源，决定它能不能、该不该独立升级：
+ *   registry —— profile 依赖里从 npm 装的，可独立比对与升级
+ *   local    —— file: / link: / git 来源，registry 上查不到
+ *   runtime  —— 随 dsh 运行时自带（在 bundles 里但不在 dependencies），
+ *               版本跟着 dsh 走，单独升级没有意义
+ */
+export type PluginSource = 'registry' | 'local' | 'runtime'
+
 export interface PluginUpdate {
   name: string
   profile: string
+  source: PluginSource
   current: string | null
   latest: string | null
   upgradable: boolean
+  /** 是否在 dsh.profile.bundles 层叠里 */
+  inBundles: boolean
   error: string | null
 }
 
