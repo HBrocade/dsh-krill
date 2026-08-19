@@ -291,6 +291,11 @@ export async function install(
     onOutput?.(`已写入 ${String(patches.length)} 处代码级补丁声明：${patches.join('、')}`)
     // 补丁只有经过一次 pnpm 安装才会真正打上去
     await runDshPlugin(profile, ['install'], onOutput)
+    // 装完回读：pnpm 能保证补丁被应用，保证不了它打出了预期效果
+    for (const v of corePatch.verify(profile, dir)) {
+      onOutput?.(`${v.ok ? '✓' : '✗'} 补丁校验 ${v.package}：${v.detail}`)
+      if (!v.ok) log(`补丁未产生预期效果：${v.package} —— ${v.detail}`, 'stderr')
+    }
   }
 
   if (args.channel === 'injected') {

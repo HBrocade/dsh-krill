@@ -10,8 +10,15 @@
  *
  * 三条铁律（都是「改别人代码」这件事必然要面对的）：
  *
- *  1. **版本钉死。** 每个补丁声明它针对哪个上游版本。装的版本对不上就拒绝，
- *     不做模糊匹配 —— 补丁打歪比不打更糟，它会产出一个能跑但行为错乱的宿主。
+ *  1. **尽量兼容，但如实告知。** 实测 pnpm 的 `patchedDependencies` 键
+ *     **可以只写包名**，这样补丁会对任意已装版本尝试应用，而不是版本号一对不上
+ *     就整个拒绝。宿主小版本升级往往不动被补丁的那几行，这时 mod 照常可用。
+ *     所以这里用包名做键，让「能不能打上」由补丁内容自己回答。
+ *
+ *     代价是补丁失败会变成安装失败（`ERR_PNPM_PATCH_FAILED`）。因此声明里
+ *     同时记录 `authoredFor`（作者是针对哪个版本写的）与 `appliesTo`
+ *     （作者认为适用的范围），面板据此在装之前就提示风险，
+ *     并在 dsh 升级后主动标出哪些 mod 可能已经失效。
  *  2. **可逆。** 卸载插件要能把补丁一并撤掉，不留痕。
  *  3. **失败必须响。** 实测 pnpm 在版本对不上时是硬失败的
  *     （`ERR_PNPM_UNUSED_PATCH`，退出码 1），这点它做得对。
@@ -23,6 +30,7 @@
 import { readFileSync, writeFileSync, existsSync, mkdirSync, copyFileSync, rmSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse, stringify } from 'yaml'
+import { compareVersions, parseVersion } from '@shared/semver'
 import { profilesRoot, installedVersion } from '../update/plugins.ts'
 import { log } from '../backend/log-ring.ts'
 
@@ -30,23 +38,63 @@ import { log } from '../backend/log-ring.ts'
 export interface CorePatchDecl {
   /** 目标包名，如 @deepseek-ai/dsh-llm */
   package: string
-  /** 针对的上游版本 —— 必须精确匹配，不做范围 */
-  version: string
+  /** 作者针对哪个版本写的这个补丁 —— 仅用于展示与判断陈旧度，不作为门禁 */
+  authoredFor: string
+  /**
+   * 作者认为适用的 semver 范围。装的版本落在范围内 = 预期可用；
+   * 落在范围外仍会尝试应用（由补丁内容自己决定成败），只是面板会提示风险。
+   */
+  appliesTo?: string
   /** 相对插件目录的 .patch 路径 */
   file: string
   /** 一句话说明这个补丁干什么，面板上要给用户看 */
   reason?: string
+  /**
+   * 回读探针：装完后在目标包的哪个文件里应该能搜到什么串。
+   *
+   * 必要性在于「补丁应用了」与「补丁产生了预期效果」是两件事 ——
+   * 补丁可能匹配到错误位置，或目标符号被上游改名而补丁仍能应用。
+   * 探针要挑该补丁**独有**的符号：实测时我一度拿 placeholderImages 去探
+   * dsh-llm-deepseek，得到 0 命中，误判成补丁失败 —— 而那个包只是
+   * **导入**该符号、并不定义它，正确的探针是 IMAGE_PLACEHOLDER。
+   */
+  verify?: { file: string; contains: string }
 }
 
 export interface CorePatchStatus extends CorePatchDecl {
   /** profile 里实际装的版本 */
   installedVersion: string | null
-  /** 版本是否匹配 */
-  versionMatches: boolean
+  /** 装的版本正是作者写补丁时那个 —— 最稳的情况 */
+  exactMatch: boolean
+  /** 装的版本落在作者声明的适用范围内 */
+  inRange: boolean
   /** 是否已写进 pnpm-workspace.yaml 的 patchedDependencies */
   declared: boolean
   /** 补丁文件是否已复制到 profile */
   filePresent: boolean
+}
+
+/**
+ * 极简 semver 范围判断，只支持 `^x.y.z` 与 `>=a <b` 两种形式 ——
+ * mod 声明适用范围用不上完整的 semver 语法，多引一个依赖不值得。
+ * 看不懂的范围一律当作「不在范围内」，宁可多提示一次风险。
+ */
+function satisfies(version: string, range: string): boolean {
+  const v = parseVersion(version)
+  if (v === null) return false
+  const caret = /^\^(.+)$/.exec(range.trim())
+  if (caret !== null) {
+    const base = parseVersion(caret[1] ?? '')
+    if (base === null) return false
+    // 0.x 视 minor 为不兼容边界，与 npm 的 ^ 语义一致
+    if (base.major === 0) return v.major === 0 && v.minor === base.minor && compareVersions(version, caret[1] ?? '') >= 0
+    return v.major === base.major && compareVersions(version, caret[1] ?? '') >= 0
+  }
+  const pair = /^>=\s*([^\s]+)\s+<\s*([^\s]+)$/.exec(range.trim())
+  if (pair !== null) {
+    return compareVersions(version, pair[1] ?? '') >= 0 && compareVersions(version, pair[2] ?? '') < 0
+  }
+  return false
 }
 
 export function readDecls(pluginDir: string): CorePatchDecl[] {
@@ -59,7 +107,7 @@ export function readDecls(pluginDir: string): CorePatchDecl[] {
     return raw.filter((d): d is CorePatchDecl =>
       d !== null && typeof d === 'object'
       && typeof (d as CorePatchDecl).package === 'string'
-      && typeof (d as CorePatchDecl).version === 'string'
+      && typeof (d as CorePatchDecl).authoredFor === 'string'
       && typeof (d as CorePatchDecl).file === 'string')
   } catch {
     return []
@@ -93,9 +141,15 @@ function writeWorkspace(profile: string, doc: Record<string, unknown>): void {
   writeFileSync(f, stringify(doc), 'utf8')
 }
 
-/** pnpm 的 patchedDependencies 键是 `包名@版本`。 */
+/**
+ * pnpm 的 patchedDependencies 键。
+ *
+ * **只写包名，不带版本** —— 这样补丁会对任意已装版本尝试应用。
+ * 写成 `包名@版本` 的话，宿主一升级 pnpm 就直接以 ERR_PNPM_UNUSED_PATCH
+ * 拒绝安装，哪怕那次升级根本没碰被补丁的代码。
+ */
 function patchKey(d: CorePatchDecl): string {
-  return `${d.package}@${d.version}`
+  return d.package
 }
 
 export function inspect(profile: string, pluginDir: string): CorePatchStatus[] {
@@ -108,7 +162,8 @@ export function inspect(profile: string, pluginDir: string): CorePatchStatus[] {
     return {
       ...d,
       installedVersion: got,
-      versionMatches: got === d.version,
+      exactMatch: got === d.authoredFor,
+      inRange: got !== null && satisfies(got, d.appliesTo ?? `^${d.authoredFor}`),
       declared: Object.hasOwn(patched, patchKey(d)),
       filePresent: existsSync(join(patchDir(profile), `${d.package.replace(/\//g, '__')}.patch`)),
     }
@@ -127,15 +182,15 @@ export function apply(profile: string, pluginDir: string): string[] {
   const decls = readDecls(pluginDir)
   if (decls.length === 0) return []
 
-  const mismatched = inspect(profile, pluginDir).filter((s) => !s.versionMatches)
-  if (mismatched.length > 0) {
-    throw new Error(
-      '代码级补丁的目标版本对不上，拒绝应用：\n'
-      + mismatched.map((s) =>
-        `  ${s.package}：补丁针对 ${s.version}，实际装的是 ${s.installedVersion ?? '未安装'}`).join('\n')
-      + '\n补丁打歪会产出一个能跑但行为错乱的宿主，比不打更糟。'
-      + '请等插件作者出适配新版本的补丁，或把该包降回目标版本。',
-    )
+  // 版本不在作者声明的范围内不再直接拒绝 —— 宿主小版本升级常常不动被补丁的
+  // 那几行，这时 mod 照常可用。让补丁内容自己回答能不能打上：
+  // 打得上就继续，打不上 pnpm 会以 ERR_PNPM_PATCH_FAILED 挡下安装。
+  // 这里只把风险记进日志，调用方负责在面板上提示。
+  const risky = inspect(profile, pluginDir).filter((s) => !s.inRange)
+  for (const r of risky) {
+    log(`代码级补丁版本超出作者声明的适用范围：${r.package} 装的是 `
+      + `${r.installedVersion ?? '未安装'}，补丁针对 ${r.authoredFor}`
+      + `（适用 ${r.appliesTo ?? `^${r.authoredFor}`}）。仍会尝试应用。`, 'stderr')
   }
 
   const dir = patchDir(profile)
@@ -150,7 +205,7 @@ export function apply(profile: string, pluginDir: string): string[] {
     const name = `${d.package.replace(/\//g, '__')}.patch`
     copyFileSync(src, join(dir, name))
     patched[patchKey(d)] = `patches/${name}`
-    applied.push(`${d.package}@${d.version}`)
+    applied.push(`${d.package}（针对 ${d.authoredFor}）`)
   }
 
   ws['patchedDependencies'] = patched
@@ -170,7 +225,7 @@ export function revert(profile: string, pluginDir: string): string[] {
   for (const d of decls) {
     if (Object.hasOwn(patched, patchKey(d))) {
       delete patched[patchKey(d)]
-      removed.push(patchKey(d))
+      removed.push(`${d.package}（针对 ${d.authoredFor}）`)
     }
     rmSync(join(patchDir(profile), `${d.package.replace(/\//g, '__')}.patch`), { force: true })
   }
@@ -193,8 +248,11 @@ export function revert(profile: string, pluginDir: string): string[] {
  */
 export function verify(
   profile: string,
-  probes: ReadonlyArray<{ package: string; file: string; contains: string }>,
+  pluginDir: string,
 ): Array<{ package: string; ok: boolean; detail: string }> {
+  const probes = readDecls(pluginDir)
+    .filter((d): d is CorePatchDecl & { verify: { file: string; contains: string } } => d.verify !== undefined)
+    .map((d) => ({ package: d.package, file: d.verify.file, contains: d.verify.contains }))
   return probes.map((p) => {
     const f = join(profilesRoot(), profile, 'node_modules', ...p.package.split('/'), p.file)
     if (!existsSync(f)) {

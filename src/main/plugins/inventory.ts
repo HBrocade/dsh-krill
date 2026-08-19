@@ -159,9 +159,11 @@ export async function collect(): Promise<PluginsState> {
         dir: meta.dir,
         corePatches: meta.dir === null ? [] : corePatch.inspect(profile, meta.dir).map((c) => ({
           package: c.package,
-          version: c.version,
+          authoredFor: c.authoredFor,
+          appliesTo: c.appliesTo ?? `^${c.authoredFor}`,
           installedVersion: c.installedVersion,
-          versionMatches: c.versionMatches,
+          exactMatch: c.exactMatch,
+          inRange: c.inRange,
           declared: c.declared,
           reason: c.reason ?? null,
         })),

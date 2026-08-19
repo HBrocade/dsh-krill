@@ -146,11 +146,16 @@ export type PluginChannel = 'official' | 'injected' | 'both' | 'none'
  */
 export interface CorePatchInfo {
   package: string
-  /** 补丁针对的上游版本，必须精确匹配 */
-  version: string
+  /** 作者针对哪个版本写的 —— 仅供展示与判断陈旧度，不是门禁 */
+  authoredFor: string
+  /** 作者声明的适用范围 */
+  appliesTo: string
   /** 实际装的版本 */
   installedVersion: string | null
-  versionMatches: boolean
+  /** 装的正是作者写补丁时那个版本 */
+  exactMatch: boolean
+  /** 落在作者声明的适用范围内 */
+  inRange: boolean
   /** 已写进 patchedDependencies */
   declared: boolean
   reason: string | null

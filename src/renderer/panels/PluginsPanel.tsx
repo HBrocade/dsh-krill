@@ -136,22 +136,26 @@ export function PluginsPanel(): React.JSX.Element {
                       <details className="patches">
                         <summary className="muted">
                           修改宿主代码 {e.corePatches.length} 处
-                          {e.corePatches.some((c) => !c.versionMatches) ? ' · 版本不匹配' : ''}
+                          {e.corePatches.some((c) => !c.inRange) ? ' · 宿主版本超出适用范围' : ''}
                         </summary>
                         {e.corePatches.map((c) => (
                           <div className="patch-row" key={c.package}>
-                            <span className={c.versionMatches ? 'step-mark ok' : 'step-mark bad'}>
-                              {c.versionMatches ? '✓' : '✗'}
+                            <span className={c.exactMatch ? 'step-mark ok' : c.inRange ? 'step-mark' : 'step-mark bad'}>
+                              {c.exactMatch ? '✓' : c.inRange ? '~' : '!'}
                             </span>
                             <div>
                               <div className="mono">
-                                {c.package} <span className="muted">@{c.version}</span>
+                                {c.package}{' '}
+                                <span className="muted">
+                                  宿主 {c.installedVersion ?? '未安装'} · 补丁针对 {c.authoredFor}
+                                </span>
                                 {c.declared ? <span className="tag tag-dim">已声明</span> : null}
                               </div>
-                              {!c.versionMatches ? (
+                              {!c.inRange ? (
                                 <div className="muted desc">
-                                  实际装的是 {c.installedVersion ?? '未安装'} —— 版本不匹配。
-                                  安装会被 pnpm 挡下（ERR_PNPM_UNUSED_PATCH），需要等插件作者出适配新版本的补丁。
+                                  宿主版本超出作者声明的适用范围（{c.appliesTo}）。仍会尝试应用 ——
+                                  宿主升级往往不动被补丁的那几行，这时照常可用；
+                                  真打不上时 pnpm 会以 ERR_PNPM_PATCH_FAILED 挡下安装，不会留下半成品。
                                 </div>
                               ) : c.reason !== null ? (
                                 <div className="muted desc">{c.reason}</div>
@@ -171,7 +175,7 @@ export function PluginsPanel(): React.JSX.Element {
                       {e.disabled ? <span className="tag tag-bad">已禁用</span> : null}
                       {e.pendingRemoval ? <span className="tag tag-bad">待卸载</span> : null}
                       {e.corePatches.length > 0 ? (
-                        <span className={`tag ${e.corePatches.every((c) => c.versionMatches) ? 'tag-warn' : 'tag-bad'}`}
+                        <span className={`tag ${e.corePatches.every((c) => c.inRange) ? 'tag-warn' : 'tag-bad'}`}
                           title="这个插件会修改宿主的代码">
                           改宿主代码 ×{e.corePatches.length}
                         </span>
@@ -221,8 +225,9 @@ export function PluginsPanel(): React.JSX.Element {
           <div className="muted hint">
             标「改宿主代码」的插件会修改 dsh 自身包的代码 —— 有些能力光靠挂载做不到
             （识图就是例子：它需要 <span className="mono">dsh-llm</span> 提供占位符机制）。
-            补丁的目标版本<b>精确钉死</b>，dsh 升级后版本对不上就拒绝应用而不是硬打；
-            卸载插件时补丁会一并撤销。
+            补丁按<b>包名</b>声明而不钉版本 —— dsh 小版本升级往往不动被补丁的那几行，
+            这时 mod 照常可用。宿主版本超出作者声明的适用范围时会提示风险但仍尝试应用；
+            真打不上由 pnpm 挡下安装，不会留下半成品。卸载插件时补丁一并撤销。
           </div>
         ) : null}
         {s.entries.some((e) => e.clientBundleMissing) ? (
