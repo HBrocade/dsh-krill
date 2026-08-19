@@ -109,7 +109,7 @@ npm run dist       # 打 dmg（尚未配置，见下）
 - [x] **P1** 外壳骨架：后端 supervisor、双 view 窗口、托盘、日志面板
 - [x] **P2** 更新中心：dsh CLI / 插件 / 源码仓库 / App 自身，四类检测
 - [x] **P3** 插件管理器：清单合并、patch 体检、双通道安装、卸载四处清理、识别闭环
-- [x] **P4** 桥接接口：本地 HTTP + stdio MCP shim，`dsh_ask` / `dsh_review`
+- [x] **P4** 桥接接口：两个端点（自描述文档 + 执行）+ stdio MCP shim
 - [ ] **P5** 多模态控制台
 - [ ] **P6** 打包分发（`npm run dist` 目前跑不了，缺 electron-builder 配置）
 

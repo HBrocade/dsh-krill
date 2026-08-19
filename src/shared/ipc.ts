@@ -237,8 +237,6 @@ export interface BridgeConfig {
   enabled: boolean
   /** 0 = 由 OS 分配 */
   port: number
-  /** 默认 profile，一次性任务用 headless */
-  profile: string
   /** 允许作为工作目录的白名单；空数组 = 只允许请求显式传入且真实存在的目录 */
   allowedRoots: string[]
   timeoutMs: number
@@ -255,6 +253,8 @@ export interface BridgeStatus {
   lastError: string | null
   /** 给 Claude Code 的接入命令，面板一键复制 */
   mcpCommand: string
+  /** 当前在用的模型描述 —— 与聊天共用同一份全局配置，调用方无需指定 */
+  model: string
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

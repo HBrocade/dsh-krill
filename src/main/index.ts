@@ -159,7 +159,10 @@ async function main(): Promise<void> {
   bridge.onChange(() => { getShellContents()?.send('bridge:changed', bridge.status()) })
   // 配置里开着才起 —— 默认关闭，这个接口能在本机执行任务
   if (cfg.bridge.enabled || DEV_BRIDGE) {
-    if (DEV_BRIDGE && !cfg.bridge.enabled) saveConfig({ bridge: { ...cfg.bridge, enabled: true } })
+    // --dev-bridge 只影响本次运行，**不写用户配置** ——
+    // 之前它会把 enabled 落盘成 true，验证完还留着，等于替用户打开了一个
+    // 默认应该关闭的接口
+    if (DEV_BRIDGE) bridge.forceEnable()
     void bridge.start().then((s) => {
       log(`DEV_BRIDGE_READY port=${String(s.port)} token=${s.token}`)
     }).catch((e: unknown) => {

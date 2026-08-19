@@ -56,6 +56,9 @@ export function BridgePanel(): React.JSX.Element {
                 ? `运行中 · http://127.0.0.1:${String(st.port)} · 已服务 ${String(st.totalServed)} 次 · 进行中 ${String(st.inflight)}`
                 : '未启动'}
             </div>
+            <div className="muted" style={{ marginTop: 4 }}>
+              使用模型 <span className="mono">{st.model}</span> —— 与你聊天用的是同一份全局配置，调用方无需指定
+            </div>
           </div>
           <button
             className={`btn${cfg.enabled ? '' : ' btn-primary'}`}
@@ -142,14 +145,6 @@ export function BridgePanel(): React.JSX.Element {
             <span className="muted"> 0 = 由系统分配</span>
           </div>
 
-          <label>默认 profile</label>
-          <div>
-            <input className="input mono" value={cfg.profile}
-              onChange={(e) => setCfg({ ...cfg, profile: e.target.value })}
-              onBlur={() => { void patch({ profile: cfg.profile }, 'profile') }} />
-            <span className="muted"> headless 是官方的一次性任务入口</span>
-          </div>
-
           <label>超时（毫秒）</label>
           <div>
             <input className="input mono" type="number" value={cfg.timeoutMs}
@@ -184,12 +179,20 @@ export function BridgePanel(): React.JSX.Element {
         <div className="card-title">端点</div>
         <table className="tbl">
           <tbody>
-            <tr><td className="mono">GET /v1/health</td><td className="muted">版本、profile 列表、并发情况</td></tr>
-            <tr><td className="mono">POST /v1/ask</td><td className="muted">{'{prompt, cwd?, profile?, timeoutMs?}'}</td></tr>
-            <tr><td className="mono">POST /v1/review</td><td className="muted">{'{diff?, cwd?, ref?, focus?}'} —— 组装成第二意见审查提示词</td></tr>
+            <tr>
+              <td className="mono">GET /v1/docs</td>
+              <td className="muted">自描述文档：当前模型、参数、示例、限制。调用方读一次就知道怎么用</td>
+            </tr>
+            <tr>
+              <td className="mono">POST /v1/ask</td>
+              <td className="muted">{'{prompt, cwd?}'} —— 干活的那个</td>
+            </tr>
           </tbody>
         </table>
         <div className="muted hint">
+          刻意只有两个。模型、凭据、profile 都不暴露给调用方 —— 它们取自 <span className="mono">~/.dsh</span>
+          全局配置，和你聊天用的是同一份。代码审查这类便利封装放在 MCP shim 侧本地组装，不往服务端加端点。
+          <br />
           任务本身失败（非零退出）返回 HTTP 200 带 <span className="mono">exitCode</span> ——
           调用方要能拿到输出自己判断，而不是只收到一个错误码。
         </div>

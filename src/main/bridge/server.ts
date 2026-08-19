@@ -17,8 +17,8 @@ import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { log } from '../backend/log-ring.ts'
 import { loadConfig, saveConfig } from '../config/store.ts'
 import { currentVersion } from '../update/cli.ts'
-import { listProfiles } from '../update/plugins.ts'
 import * as runner from './runner.ts'
+import * as currentModel from './current-model.ts'
 import type { BridgeStatus } from '@shared/ipc'
 
 /** 请求体上限：diff 可能不小，但 2MB 已经远超正常 code review 的量 */
@@ -27,6 +27,8 @@ const MAX_BODY = 2 * 1024 * 1024
 let server: Server | null = null
 let token = ''
 let totalServed = 0
+/** 仅本次运行强制启用（--dev-bridge），不落盘 —— 默认关闭是安全设计的一部分 */
+let forced = false
 let lastError: string | null = null
 const listeners = new Set<() => void>()
 
@@ -115,20 +117,64 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return
   }
 
-  if (path === '/v1/health' && req.method === 'GET') {
-    const status: Record<string, unknown> = {
-      ok: true,
+  // 两个端点就够：一个说明怎么用，一个负责干活。
+  // 文档做成自描述的 —— 调用方（多半是另一个 AI）读一次就知道怎么调，
+  // 不用去翻 README。
+  if ((path === '/v1/docs' || path === '/' || path === '/v1') && req.method === 'GET') {
+    const m = currentModel.read()
+    send(res, 200, {
+      name: 'Krill bridge',
+      purpose: '把 DeepSeek Harness（dsh）当作第二意见来源：换一个模型、换一个角度看同一件事。',
       dshVersion: currentVersion(),
-      profiles: listProfiles(),
-      inflight: runner.inflightCount(),
-      maxConcurrent: cfg.maxConcurrent,
-      totalServed,
-    }
-    send(res, 200, status)
+      // 模型与凭据都取自 ~/.dsh 全局配置 —— 和用户此刻聊天用的完全一致，
+      // 调用方不需要、也不能指定
+      model: { provider: m.provider, name: m.model, reasoningEffort: m.reasoningEffort },
+      auth: '所有请求都要带 Authorization: Bearer <token>',
+      endpoints: {
+        'GET /v1/docs': '本文档',
+        'POST /v1/ask': {
+          body: {
+            prompt: '必填。要交给 dsh 的任务或问题。',
+            cwd: '选填。工作目录绝对路径；dsh 会在这个目录里执行，可读写文件、跑 git 等。',
+          },
+          returns: {
+            text: 'dsh 的回答（最后一条非空 assistant 文本）',
+            exitCode: '0 为正常；非零表示任务失败，但 HTTP 仍是 200',
+            durationMs: '耗时',
+            timedOut: '是否被超时中止',
+            stderrTail: '失败时的 stderr 尾部',
+          },
+        },
+      },
+      examples: [
+        {
+          用途: '问一个独立问题',
+          curl: `curl -X POST $BRIDGE/v1/ask -H "Authorization: Bearer $TOKEN" `
+            + `-H 'content-type: application/json' -d '{"prompt":"这段实现有什么隐患？"}'`,
+        },
+        {
+          用途: '代码审查第二意见',
+          说明: '把 cwd 指到仓库，让它自己去跑 git diff 拿改动',
+          curl: `curl -X POST $BRIDGE/v1/ask -H "Authorization: Bearer $TOKEN" `
+            + `-H 'content-type: application/json' `
+            + `-d '{"cwd":"/path/to/repo","prompt":"运行 git diff HEAD 拿到改动，`
+            + `作为独立审查者给出第二意见：只报有把握的问题，给出位置与可复现场景，不要复述改动做了什么。"}'`,
+        },
+      ],
+      notes: [
+        '任务失败不用 HTTP 错误码表达 —— 一律 200，看 exitCode 与 text 自己判断。',
+        '并发上限 ' + String(cfg.maxConcurrent) + '，超了返回 429。',
+        '默认超时 ' + String(cfg.timeoutMs) + ' 毫秒。',
+        cfg.allowedRoots.length === 0
+          ? 'cwd 不限根目录，但必须是真实存在的目录。'
+          : 'cwd 必须位于白名单内：' + cfg.allowedRoots.join('、'),
+      ],
+      runtime: { inflight: runner.inflightCount(), totalServed },
+    })
     return
   }
 
-  if ((path === '/v1/ask' || path === '/v1/review') && req.method === 'POST') {
+  if (path === '/v1/ask' && req.method === 'POST') {
     if (runner.inflightCount() >= cfg.maxConcurrent) {
       send(res, 429, { error: `并发已满（上限 ${String(cfg.maxConcurrent)}），稍后再试` })
       return
@@ -141,19 +187,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return
     }
 
-    const prompt = path === '/v1/ask'
-      ? String(body['prompt'] ?? '')
-      : runner.buildReviewPrompt({
-          diff: typeof body['diff'] === 'string' ? body['diff'] : undefined,
-          ref: typeof body['ref'] === 'string' ? body['ref'] : undefined,
-          focus: typeof body['focus'] === 'string' ? body['focus'] : undefined,
-        })
-
     try {
       const result = await runner.run({
-        prompt,
+        prompt: String(body['prompt'] ?? ''),
         cwd: typeof body['cwd'] === 'string' ? body['cwd'] : undefined,
-        profile: typeof body['profile'] === 'string' ? body['profile'] : cfg.profile,
         timeoutMs: typeof body['timeoutMs'] === 'number' ? body['timeoutMs'] : cfg.timeoutMs,
       }, cfg.allowedRoots)
       totalServed += 1
@@ -191,13 +228,16 @@ export function status(): BridgeStatus {
       ? '（桥接未启动）'
       : `claude mcp add dsh --env KRILL_BRIDGE=http://127.0.0.1:${String(port)} `
         + `--env KRILL_TOKEN=${ensureToken()} -- node <Krill.app>/Contents/Resources/bridge-mcp/index.mjs`,
+    model: currentModel.describe(),
   }
 }
+
+export function forceEnable(): void { forced = true }
 
 export function start(): Promise<BridgeStatus> {
   const cfg = loadConfig().bridge
   if (server !== null) return Promise.resolve(status())
-  if (!cfg.enabled) throw new Error('桥接接口未启用')
+  if (!cfg.enabled && !forced) throw new Error('桥接接口未启用')
 
   return new Promise((resolve, reject) => {
     const s = createServer((req, res) => {

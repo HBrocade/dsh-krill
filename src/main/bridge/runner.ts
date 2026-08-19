@@ -13,7 +13,6 @@ import { log } from '../backend/log-ring.ts'
 export interface RunRequest {
   prompt: string
   cwd?: string
-  profile?: string
   timeoutMs?: number
 }
 
@@ -69,7 +68,8 @@ export function run(req: RunRequest, allowedRoots: readonly string[]): Promise<R
   if (task === '') throw new Error('prompt 不能为空')
 
   const cwd = resolveCwd(req.cwd, allowedRoots)
-  const profile = req.profile ?? 'headless'
+  // 固定用 headless —— 一次性任务只有它合适，不做成可配置项徒增调用方负担
+  const profile = 'headless'
   const timeoutMs = req.timeoutMs ?? 300_000
   const argv = [located.bin, '--profile', profile, task]
   const started = Date.now()

@@ -24,7 +24,8 @@ const TOOLS = [
     name: 'dsh_ask',
     description:
       '把一个问题交给 DeepSeek Harness（dsh）跑一次一次性任务，返回它的回答。'
-      + '用于获取来自另一个模型的独立意见。任务在本机执行，可指定工作目录。',
+      + '用于获取来自另一个模型的独立意见。任务在本机执行，可指定工作目录。'
+      + '模型与凭据取自用户的 dsh 全局配置，与其聊天时所用的完全一致，无需也无法指定。',
     inputSchema: {
       type: 'object',
       properties: {
@@ -51,6 +52,32 @@ const TOOLS = [
     },
   },
 ]
+
+/**
+ * 把 review 请求在**本地**组装成一句 prompt。
+ *
+ * 桥接的 HTTP 面刻意只有两个端点（一个文档、一个执行），
+ * review 这类便利封装放在客户端这边，不往服务端加端点。
+ */
+function buildReviewPrompt({ diff, ref, focus }) {
+  const parts = [
+    '你是一位独立的代码审查者，正在为另一个 AI 的工作提供第二意见。',
+    '只报告你有把握的问题，给出具体位置与可复现的失败场景；',
+    '没把握的猜测请明确标注为猜测。不要复述改动做了什么。',
+    '',
+  ]
+  if (focus && focus.trim()) parts.push(`重点关注：${focus.trim()}`, '')
+  if (diff && diff.trim()) {
+    parts.push('待审查的 diff：', '```diff', diff.trim(), '```')
+  } else {
+    const r = (ref && ref.trim()) || 'HEAD'
+    parts.push(
+      `请先在当前工作目录运行 \`git diff ${r}\`（若无输出则试 \`git diff ${r}~1 ${r}\`）`,
+      '拿到改动内容，然后审查它。',
+    )
+  }
+  return parts.join('\n')
+}
 
 async function callBridge(path, body) {
   if (TOKEN === '') throw new Error('未设置 KRILL_TOKEN 环境变量')
@@ -103,9 +130,15 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   if (method === 'tools/call') {
     const name = params?.name
     const args = params?.arguments ?? {}
-    const path = name === 'dsh_ask' ? '/v1/ask' : name === 'dsh_review' ? '/v1/review' : null
-    if (path === null) { fail(id, `未知工具：${String(name)}`); return }
-    callBridge(path, args)
+    let payload
+    if (name === 'dsh_ask') {
+      payload = { prompt: args.prompt, cwd: args.cwd, timeoutMs: args.timeoutMs }
+    } else if (name === 'dsh_review') {
+      payload = { prompt: buildReviewPrompt(args), cwd: args.cwd }
+    } else {
+      fail(id, `未知工具：${String(name)}`); return
+    }
+    callBridge('/v1/ask', payload)
       .then((r) => {
         reply(id, {
           content: [{ type: 'text', text: renderResult(r) }],

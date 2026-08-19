@@ -34,7 +34,6 @@ const DEFAULTS: DesktopConfig = {
     // 对外接口默认关闭：它能在本机执行任务，必须由用户显式打开
     enabled: false,
     port: 0,
-    profile: 'headless',
     allowedRoots: [],
     timeoutMs: 300_000,
     maxConcurrent: 2,
