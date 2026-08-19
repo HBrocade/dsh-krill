@@ -14,6 +14,10 @@ build/icon.iconset/
 # 设计过程稿（AI 概念图、像素版、各轮比例对比）—— 只留 build/whale.png 这个抠图产物
 build/concepts/
 
+# 插件包：里面是本地构建产物与针对已发布包的补丁，
+# 都派生自尚未推上游的私有实现 —— 不入公开仓库
+packs/
+
 # 实施计划，本地文档不入库
 PLAN.md
 
