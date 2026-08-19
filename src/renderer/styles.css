@@ -196,3 +196,23 @@ body {
 .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
 .dot-ok  { background: var(--ok); box-shadow: 0 0 0 3px rgba(52,211,153,.15); }
 .dot-bad { background: var(--danger); box-shadow: 0 0 0 3px rgba(248,113,113,.15); }
+
+/* ── 插件动作 ────────────────────────────────────────────────────────────── */
+.btn-sm { padding: 3px 9px; font-size: 11.5px; }
+.btn-danger { color: #FCA5A5; border-color: rgba(248,113,113,.28); }
+.btn-danger:hover:not(:disabled) { background: rgba(248,113,113,.12); }
+.acts { display: flex; gap: 6px; justify-content: flex-end; white-space: nowrap; }
+.install-row { display: flex; gap: 8px; align-items: center; margin: 4px 0 2px; }
+.input {
+  font: inherit; padding: 6px 10px; border-radius: 7px;
+  background: var(--bg-sunken); color: var(--text); border: 1px solid var(--line);
+}
+.input:focus { outline: none; border-color: #2E3B4F; }
+.install-row .input:first-child { flex: 1; min-width: 0; }
+.select { flex: 0 0 auto; }
+.step { display: flex; gap: 10px; padding: 7px 0; border-top: 1px solid var(--line-soft); }
+.step:first-of-type { border-top: 0; }
+.step-mark { flex: 0 0 16px; text-align: center; font-weight: 700; }
+.step-mark.ok { color: var(--ok); }
+.step-mark.bad { color: var(--danger); }
+.step-mark.skip { color: var(--text-faint); }

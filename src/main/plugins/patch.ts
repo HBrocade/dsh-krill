@@ -13,7 +13,7 @@
  */
 import { readFileSync, writeFileSync, existsSync, copyFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { parse, stringify } from 'yaml'
+import { parse, parseDocument, stringify } from 'yaml'
 import { profilesRoot } from '../update/plugins.ts'
 import { log } from '../backend/log-ring.ts'
 import type { PatchHealth } from '@shared/ipc'
@@ -26,6 +26,24 @@ export interface PatchEntry {
   config?: unknown
   insert?: PatchEntry[]
   [k: string]: unknown
+}
+
+/**
+ * 判断 patch 里有没有**真正的**自定义 YAML 标签（如 `!!js/function`）。
+ *
+ * 不能用正则扫全文 —— 官方 patch 模板的注释里就写着「`!!js` expressions allowed」，
+ * 正则会把每一个标准 profile 都误判成含自定义标签，于是所有 patch 操作全被拒绝。
+ * 这里交给解析器：未知标签会进 warnings/errors，注释不会。
+ */
+export function hasCustomTags(raw: string): boolean {
+  try {
+    const doc = parseDocument(raw)
+    const msgs = [...doc.warnings, ...doc.errors].map((w) => w.message.toLowerCase())
+    return msgs.some((m) => m.includes('tag'))
+  } catch {
+    // 解析都失败了，谈不上安全改写，按「有」处理，让调用方走拒绝路径
+    return true
+  }
 }
 
 export function patchPath(profile: string): string {
@@ -122,10 +140,10 @@ export function heal(profile: string): PatchHealth {
   }
   // 官方允许 patch 里写 `!!js` 自定义标签。我们的修复是「解析 → 改结构 → 整份写回」，
   // 这类标签往返一趟很可能被丢掉或改形 —— 那等于替用户毁了配置。宁可不修，只报告。
-  if (existsSync(file) && /!!js/.test(readFileSync(file, 'utf8'))) {
+  if (existsSync(file) && hasCustomTags(readFileSync(file, 'utf8'))) {
     throw new Error(
-      '这份 patch 里含 `!!js` 自定义标签。自动修复要整份重写文件，'
-      + '可能破坏这些表达式，因此拒绝改写。请手动处理，或先移除 !!js 段落再修复。',
+      '这份 patch 里含自定义 YAML 标签（如 !!js）。自动修复要整份重写文件，'
+      + '可能破坏这些表达式，因此拒绝改写。请手动处理，或先移除这些段落再修复。',
     )
   }
   if (before.duplicateIds.length === 0 && before.orphanDisabled.length === 0) return before

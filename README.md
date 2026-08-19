@@ -108,7 +108,7 @@ npm run dist       # 打 dmg（尚未配置，见下）
 - [x] **P0** 工程脚手架（electron-vite + TypeScript strict + React）
 - [x] **P1** 外壳骨架：后端 supervisor、双 view 窗口、托盘、日志面板
 - [x] **P2** 更新中心：dsh CLI / 插件 / 源码仓库 / App 自身，四类检测
-- [~] **P3** 插件管理器：清单合并与 patch 体检已通；安装/卸载动作待接线
+- [x] **P3** 插件管理器：清单合并、patch 体检、双通道安装、卸载四处清理、识别闭环
 - [ ] **P4** 桥接接口
 - [ ] **P5** 多模态控制台
 - [ ] **P6** 打包分发（`npm run dist` 目前跑不了，缺 electron-builder 配置）

@@ -19,6 +19,8 @@ import type { AppInfo, OpResult, Rect } from '@shared/ipc'
 const SMOKE = process.argv.includes('--smoke-test')
 /** --capture=<前缀>：把两个 view 各抓一张 PNG 后退出（开发期验证渲染用） */
 const CAPTURE = process.argv.find((a) => a.startsWith('--capture='))?.slice('--capture='.length) ?? null
+/** --dev-uninstall=<包名>：跑一次真实卸载流程后退出（开发期验证四处清理用） */
+const DEV_UNINSTALL = process.argv.find((a) => a.startsWith('--dev-uninstall='))?.slice('--dev-uninstall='.length) ?? null
 /** --panel=<id>：抓图前先切到指定面板，用来验证某个面板的渲染 */
 const PANEL = process.argv.find((a) => a.startsWith('--panel='))?.slice('--panel='.length) ?? null
 /** --capture-delay=<毫秒>：抓图前等多久，等异步数据（如更新检查）落地 */
@@ -82,6 +84,12 @@ function registerIpc(): void {
 
   ipcMain.handle('plugins:state', () => plugins.getState())
   ipcMain.handle('plugins:refresh', () => guard(() => plugins.refresh()))
+  ipcMain.handle('plugins:install', (_e, a: { spec: string; channel: 'injected' | 'official' }) =>
+    guard(() => plugins.install(a)))
+  ipcMain.handle('plugins:uninstall', (_e, a: { name: string }) => guard(() => plugins.uninstall(a)))
+  ipcMain.handle('plugins:setDisabled', (_e, a: { name: string; disabled: boolean }) =>
+    guard(() => plugins.setDisabled(a)))
+  ipcMain.handle('plugins:patchDoctor', (_e, a: { fix: boolean }) => guard(() => plugins.patchDoctor(a)))
 }
 
 /**
@@ -145,6 +153,14 @@ async function main(): Promise<void> {
     if (SMOKE) {
       log('SMOKE_TEST_PASS：后端就绪且窗口已装配')
       setTimeout(() => app.quit(), 2_000)
+    }
+    if (DEV_UNINSTALL !== null) {
+      setTimeout(() => {
+        void plugins.uninstall({ name: DEV_UNINSTALL })
+          .then((msg) => { log(`DEV_UNINSTALL 结果：\n${msg}`) })
+          .catch((e: unknown) => { log(`DEV_UNINSTALL 失败：${String(e)}`, 'stderr') })
+          .finally(() => { setTimeout(() => app.quit(), 1_000) })
+      }, 3_000)
     }
     if (CAPTURE !== null) {
       if (PANEL !== null) getShellContents()?.send('nav:goto', { panel: PANEL })
