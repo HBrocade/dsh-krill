@@ -11,12 +11,19 @@ import * as sourceRepo from './source-repo.ts'
 import * as appUpdate from './app.ts'
 import { log } from '../backend/log-ring.ts'
 import { loadConfig } from '../config/store.ts'
+import { desktopPluginsRoot } from '../plugins/inventory.ts'
+import * as corePatch from '../plugins/core-patch.ts'
+import { readdirSync, existsSync } from 'node:fs'
+import { join } from 'node:path'
 import type { UpdateReport } from '@shared/ipc'
 
 let report: UpdateReport = {
   checkedAt: null,
   checking: false,
-  cli: { current: null, latest: null, upgradable: false, error: null },
+  cli: {
+    current: null, latest: null, upgradable: false, error: null,
+    upgrading: false, upgradeStep: null,
+  },
   plugins: [],
   sourceRepo: { path: '', exists: false, branch: null, behind: 0, ahead: 0, dirty: false, error: null },
   app: { configured: false, current: '0.0.0', latest: null, status: 'idle', progressPercent: null, error: null },
@@ -25,6 +32,7 @@ let report: UpdateReport = {
 const listeners = new Set<(r: UpdateReport) => void>()
 let timer: NodeJS.Timeout | null = null
 let inFlight: Promise<UpdateReport> | null = null
+let upgradeInFlight: Promise<string> | null = null
 
 export function getReport(): UpdateReport { return structuredClone(report) }
 
@@ -76,7 +84,8 @@ export function checkAll(options: { force?: boolean; reason?: string } = {}): Pr
     patch({
       checking: false,
       checkedAt: Date.now(),
-      cli: cliResult,
+      // 瞬时的升级状态原样带过去 —— 定时检查可能正落在升级进行中
+      cli: { ...cliResult, upgrading: report.cli.upgrading, upgradeStep: report.cli.upgradeStep },
       plugins: pluginResult,
       sourceRepo: repoResult,
       app: appResult,
@@ -120,14 +129,75 @@ export function pendingCount(): number {
   return n
 }
 
-/** 一键升级 dsh CLI。升级完不自动重启后端 —— 何时重启由用户决定。 */
-export async function upgradeCli(): Promise<string> {
+/**
+ * 列出当前**已应用**的代码级补丁。
+ *
+ * 升级运行时是 `npm install --prefix` 覆盖整棵树，这些补丁会被一并冲掉，
+ * 而且没有任何东西会自动重打。更要命的是：mod 的插件代码 import 的正是补丁加进去的
+ * 导出（`IMAGE_PLACEHOLDER` 之类），冲掉之后后端不是「功能失效」而是**根本起不来**。
+ * 所以升级前必须拦一道。
+ */
+function appliedCorePatches(): Array<{ plugin: string; package: string }> {
+  const root = desktopPluginsRoot()
+  if (!existsSync(root)) return []
+  const dirs: string[] = []
+  const scan = (base: string, depth: number): void => {
+    let names: string[]
+    try { names = readdirSync(base) } catch { return }
+    for (const n of names) {
+      const d = join(base, n)
+      if (existsSync(join(d, 'package.json'))) dirs.push(d)
+      else if (depth > 0) scan(d, depth - 1)   // @scope/ 那一层
+    }
+  }
+  scan(root, 1)
+  const out: Array<{ plugin: string; package: string }> = []
+  for (const d of dirs) {
+    for (const st of corePatch.inspect(d)) {
+      if (st.applied) out.push({ plugin: d.slice(root.length + 1), package: st.package })
+    }
+  }
+  return out
+}
+
+/**
+ * 一键升级 dsh CLI。升级完不自动重启后端 —— 何时重启由用户决定。
+ *
+ * 重复调用复用同一次升级：面板切 tab 会让按钮重新可点，两次 `npm install --prefix`
+ * 同时往一个目录写会互相踩，装出一棵谁也说不清的树。
+ */
+export function upgradeCli(): Promise<string> {
+  if (upgradeInFlight !== null) return upgradeInFlight
+
   const latest = report.cli.latest
-  if (latest === null) throw new Error('还没查到可用版本，先跑一次检查')
-  if (!report.cli.upgradable) throw new Error(`当前已是 ${report.cli.current}，无需升级`)
-  const got = await cli.install(latest)
-  patch({ cli: { ...report.cli, current: got, upgradable: false } })
-  return got
+  if (latest === null) return Promise.reject(new Error('还没查到可用版本，先跑一次检查'))
+  if (!report.cli.upgradable) return Promise.reject(new Error(`当前已是 ${report.cli.current}，无需升级`))
+
+  const applied = appliedCorePatches()
+  if (applied.length > 0) {
+    const list = applied.map((a) => `${a.plugin} → ${a.package}`).join('；')
+    return Promise.reject(new Error(
+      `已拦下升级：运行时上有 ${String(applied.length)} 处代码级补丁正在生效（${list}），`
+      + '升级会连同整棵树把它们覆盖掉。这些补丁是按当前版本写的，新版本未必贴得上；'
+      + '而 mod 的插件代码 import 的就是补丁加进去的导出 —— 冲掉之后后端会直接起不来，'
+      + '不是功能降级。要升级请先卸载相关 mod，升完再装回（届时 mod 需针对新版本重新打包）。',
+    ))
+  }
+
+  patch({ cli: { ...report.cli, upgrading: true, upgradeStep: '正在启动 npm…' } })
+  upgradeInFlight = cli.install(latest, (line) => {
+    patch({ cli: { ...report.cli, upgradeStep: line.slice(0, 200) } })
+  })
+    .then((got) => {
+      patch({ cli: { ...report.cli, current: got, upgradable: false, upgrading: false, upgradeStep: null } })
+      return got
+    })
+    .catch((e: unknown) => {
+      patch({ cli: { ...report.cli, upgrading: false, upgradeStep: null } })
+      throw e
+    })
+    .finally(() => { upgradeInFlight = null })
+  return upgradeInFlight
 }
 
 export async function pullSourceRepo(): Promise<string> {

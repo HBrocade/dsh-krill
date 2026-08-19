@@ -21,7 +21,13 @@ export function currentVersion(): string | null {
   return readDshVersion(userDshRoot()) ?? embeddedVersion()
 }
 
-export async function check(options: { force?: boolean } = {}): Promise<CliUpdate> {
+/**
+ * 只产出「查出来的事实」。`upgrading` / `upgradeStep` 是主进程持有的瞬时状态，
+ * 不能由一次检查覆盖 —— 定时检查完全可能落在一次升级进行到一半的时候。
+ */
+export type CliFacts = Omit<CliUpdate, 'upgrading' | 'upgradeStep'>
+
+export async function check(options: { force?: boolean } = {}): Promise<CliFacts> {
   const current = currentVersion()
   try {
     const { latest, taggedLatest } = await fetchVersions(PKG, options)

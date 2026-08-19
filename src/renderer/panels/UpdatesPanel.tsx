@@ -74,18 +74,24 @@ export function UpdatesPanel(): React.JSX.Element {
           {r.cli.upgradable ? (
             <button
               className="btn btn-primary"
-              disabled={busy !== null}
+              // 「升级中」以主进程的状态为准，不是本地 busy —— 切一次 tab 组件就重挂载，
+              // 本地状态清零、按钮变回可点，再点一次就是第二个 npm 往同一个目录写
+              disabled={busy !== null || r.cli.upgrading}
               onClick={() => {
                 void act('cli', () => window.dsh['update:upgradeCli'](),
                   (v) => `已升级到 ${String(v)}，重启后端后生效`)
               }}
             >
-              {busy === 'cli' ? '升级中…' : `升级到 ${r.cli.latest}`}
+              {r.cli.upgrading || busy === 'cli' ? '升级中…' : `升级到 ${r.cli.latest}`}
             </button>
           ) : (
             <span className="tag">{r.cli.error !== null ? '检查失败' : '已是最新'}</span>
           )}
         </div>
+        {r.cli.upgradeStep !== null ? (
+          // npm 装几分钟一声不吭，没有这行就跟卡死一模一样
+          <div className="muted hint mono-line">{r.cli.upgradeStep}</div>
+        ) : null}
         {r.cli.error !== null ? <div className="err-line">{r.cli.error}</div> : null}
         {r.cli.upgradable ? (
           <div className="muted hint">

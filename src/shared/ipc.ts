@@ -76,6 +76,15 @@ export interface CliUpdate {
   upgradable: boolean
   /** 检查失败时的原因（网络等），成功为 null */
   error: string | null
+  /**
+   * 升级是否正在进行。
+   *
+   * 这个状态必须住在主进程：放在面板组件里的话，切一次 tab 组件重挂载就丢了，
+   * 按钮变回可点 —— 再点一次就是第二个 npm 往同一个 prefix 写，两个进程互相踩。
+   */
+  upgrading: boolean
+  /** 升级的最新一行输出。npm 装几分钟不出声，面板会像卡死。 */
+  upgradeStep: string | null
 }
 
 /**
