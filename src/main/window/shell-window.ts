@@ -182,17 +182,22 @@ export async function captureViews(prefix: string): Promise<string[]> {
     await new Promise((r) => setTimeout(r, 600))
   }
   const out: string[] = []
-  if (shellView !== null) {
-    const img = await shellView.webContents.capturePage()
-    const p = `${prefix}-shell.png`
-    await writeFile(p, img.toPNG())
-    out.push(p)
+  // 逐个 view 独立抓、独立收错：切到管理面板时 SPA view 被移到 x=-20000
+  // （移出可视区而非销毁），不参与合成，capturePage 必然报 UnknownVizError。
+  // 那是预期的，不该让整次抓图失败。
+  const grab = async (view: WebContentsView | null, suffix: string): Promise<void> => {
+    if (view === null) return
+    try {
+      const img = await view.webContents.capturePage()
+      const p = `${prefix}-${suffix}.png`
+      await writeFile(p, img.toPNG())
+      out.push(p)
+    } catch (e) {
+      log(`抓图跳过 ${suffix}：${e instanceof Error ? e.message : String(e)}`
+        + (suffix === 'app' && !appVisible ? '（SPA view 当前在可视区外，属预期）' : ''))
+    }
   }
-  if (appView !== null) {
-    const img = await appView.webContents.capturePage()
-    const p = `${prefix}-app.png`
-    await writeFile(p, img.toPNG())
-    out.push(p)
-  }
+  await grab(shellView, 'shell')
+  await grab(appView, 'app')
   return out
 }

@@ -183,3 +183,16 @@ body {
 .tbl td:first-child { width: 46%; word-break: break-all; }
 .tbl td:last-child { text-align: right; white-space: nowrap; }
 .tag-dim { background: transparent; border: 1px solid var(--line); margin-left: 7px; padding: 1px 6px; font-size: 10.5px; }
+
+/* ── 插件面板 ────────────────────────────────────────────────────────────── */
+.tag-ok  { background: rgba(52,211,153,.13); color: #6EE7B7; }
+.tag-bad { background: rgba(248,113,113,.13); color: #FCA5A5; }
+.note-warn { background: rgba(251,191,36,.09); border: 1px solid rgba(251,191,36,.24); color: #FCD34D; }
+.desc { margin-top: 3px; line-height: 1.5; }
+.chips { display: flex; gap: 6px; margin-top: 6px; flex-wrap: wrap; }
+.chips .tag { margin-left: 0; }
+.tbl-plugins td { padding: 10px 10px 10px 0; vertical-align: top; }
+.tbl-plugins td:first-child { width: 52%; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.dot-ok  { background: var(--ok); box-shadow: 0 0 0 3px rgba(52,211,153,.15); }
+.dot-bad { background: var(--danger); box-shadow: 0 0 0 3px rgba(248,113,113,.15); }

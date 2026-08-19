@@ -83,14 +83,15 @@ function fromRegistry(spec: string): boolean {
  * 这类包的版本跟着 dsh CLI 走，独立升级没有意义，但必须列出来，
  * 否则面板会漏掉实际参与层叠的成员。
  */
-function runtimeVersion(name: string): string | null {
+export function runtimeVersion(name: string): string | null {
   const located = locateDsh()
   if (located === null) return null
   // located.bin 形如 <root>/node_modules/@deepseek-ai/dsh/lib/bin.js
-  const runtimeRoot = resolvePath(dirname(located.bin), '..', '..', '..', '..')
+  // dirname 是 .../lib，往上 3 层正好是 node_modules（lib → dsh → @deepseek-ai → node_modules）
+  const nodeModules = resolvePath(dirname(located.bin), '..', '..', '..')
   try {
     const pkg = JSON.parse(
-      readFileSync(join(runtimeRoot, ...name.split('/'), 'package.json'), 'utf8'),
+      readFileSync(join(nodeModules, ...name.split('/'), 'package.json'), 'utf8'),
     ) as { version?: unknown }
     return typeof pkg.version === 'string' ? pkg.version : null
   } catch {

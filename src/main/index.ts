@@ -12,6 +12,7 @@ import {
 } from './window/shell-window.ts'
 import { createTray, refreshTray, setUpdateReport } from './window/tray.ts'
 import * as updates from './update/index.ts'
+import * as plugins from './plugins/index.ts'
 import { loadConfig } from './config/store.ts'
 import type { AppInfo, OpResult, Rect } from '@shared/ipc'
 
@@ -78,6 +79,9 @@ function registerIpc(): void {
   ipcMain.handle('update:pullSourceRepo', () => guard(() => updates.pullSourceRepo()))
   ipcMain.handle('update:appDownload', () => guard(() => updates.downloadApp()))
   ipcMain.handle('update:appInstall', () => guard(() => updates.installApp()))
+
+  ipcMain.handle('plugins:state', () => plugins.getState())
+  ipcMain.handle('plugins:refresh', () => guard(() => plugins.refresh()))
 }
 
 /**
@@ -129,6 +133,10 @@ async function main(): Promise<void> {
     setUpdateReport(r)
   })
   updates.start()
+
+  plugins.onChange((s) => { getShellContents()?.send('plugins:changed', s) })
+  // 后端就绪后才有注入器可探；每次后端状态变 ready 都重新收一次清单
+  backend.onStatus((st) => { if (st.phase === 'ready') void plugins.refresh() })
 
   try {
     const url = await backend.start()
