@@ -19,6 +19,8 @@ export interface DesktopConfig {
   sourceRepoPath: string
   sourceRepoRef: string
   bridge: BridgeConfig
+  /** 桥接接口的 Bearer token，首次使用时随机生成 */
+  bridgeToken: string
   /** 上次停留的面板，下次启动恢复 */
   lastPanel: string
 }
@@ -37,6 +39,7 @@ const DEFAULTS: DesktopConfig = {
     timeoutMs: 300_000,
     maxConcurrent: 2,
   },
+  bridgeToken: '',
   lastPanel: 'chat',
 }
 

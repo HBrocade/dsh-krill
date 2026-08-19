@@ -13,12 +13,15 @@ import {
 import { createTray, refreshTray, setUpdateReport } from './window/tray.ts'
 import * as updates from './update/index.ts'
 import * as plugins from './plugins/index.ts'
-import { loadConfig } from './config/store.ts'
+import * as bridge from './bridge/server.ts'
+import { loadConfig, saveConfig } from './config/store.ts'
 import type { AppInfo, OpResult, Rect } from '@shared/ipc'
 
 const SMOKE = process.argv.includes('--smoke-test')
 /** --capture=<前缀>：把两个 view 各抓一张 PNG 后退出（开发期验证渲染用） */
 const CAPTURE = process.argv.find((a) => a.startsWith('--capture='))?.slice('--capture='.length) ?? null
+/** --dev-bridge：本次运行强制启用桥接接口（开发期验证用，不改配置文件） */
+const DEV_BRIDGE = process.argv.includes('--dev-bridge')
 /** --dev-uninstall=<包名>：跑一次真实卸载流程后退出（开发期验证四处清理用） */
 const DEV_UNINSTALL = process.argv.find((a) => a.startsWith('--dev-uninstall='))?.slice('--dev-uninstall='.length) ?? null
 /** --panel=<id>：抓图前先切到指定面板，用来验证某个面板的渲染 */
@@ -90,6 +93,16 @@ function registerIpc(): void {
   ipcMain.handle('plugins:setDisabled', (_e, a: { name: string; disabled: boolean }) =>
     guard(() => plugins.setDisabled(a)))
   ipcMain.handle('plugins:patchDoctor', (_e, a: { fix: boolean }) => guard(() => plugins.patchDoctor(a)))
+
+  ipcMain.handle('bridge:status', () => bridge.status())
+  ipcMain.handle('bridge:config', () => loadConfig().bridge)
+  ipcMain.handle('bridge:setConfig', (_e, patch: Partial<import('@shared/ipc').BridgeConfig>) =>
+    guard(async () => {
+      const next = saveConfig({ bridge: { ...loadConfig().bridge, ...patch } })
+      await bridge.reconcile()
+      return next.bridge
+    }))
+  ipcMain.handle('bridge:rotateToken', () => guard(() => bridge.rotateToken()))
 }
 
 /**
@@ -143,6 +156,16 @@ async function main(): Promise<void> {
   updates.start()
 
   plugins.onChange((s) => { getShellContents()?.send('plugins:changed', s) })
+  bridge.onChange(() => { getShellContents()?.send('bridge:changed', bridge.status()) })
+  // 配置里开着才起 —— 默认关闭，这个接口能在本机执行任务
+  if (cfg.bridge.enabled || DEV_BRIDGE) {
+    if (DEV_BRIDGE && !cfg.bridge.enabled) saveConfig({ bridge: { ...cfg.bridge, enabled: true } })
+    void bridge.start().then((s) => {
+      log(`DEV_BRIDGE_READY port=${String(s.port)} token=${s.token}`)
+    }).catch((e: unknown) => {
+      log(`桥接接口自动启动失败：${e instanceof Error ? e.message : String(e)}`, 'stderr')
+    })
+  }
   // 后端就绪后才有注入器可探；每次后端状态变 ready 都重新收一次清单
   backend.onStatus((st) => { if (st.phase === 'ready') void plugins.refresh() })
 
@@ -200,6 +223,7 @@ async function main(): Promise<void> {
 app.on('before-quit', () => {
   backend.markQuitting()
   backend.stop()
+  bridge.stop()
 })
 
 // macOS：关窗不退出，后端继续在后台跑、会话不断，点 Dock 图标秒开。

@@ -4,6 +4,7 @@ import { Sidebar, type PanelId } from './components/Sidebar.tsx'
 import { LogsPanel } from './panels/LogsPanel.tsx'
 import { UpdatesPanel } from './panels/UpdatesPanel.tsx'
 import { PluginsPanel } from './panels/PluginsPanel.tsx'
+import { BridgePanel } from './panels/BridgePanel.tsx'
 import { Placeholder } from './panels/Placeholder.tsx'
 
 export function App(): React.JSX.Element {
@@ -52,7 +53,7 @@ export function App(): React.JSX.Element {
         {panel === 'logs' ? <LogsPanel /> : null}
         {panel === 'updates' ? <UpdatesPanel /> : null}
         {panel === 'plugins' ? <PluginsPanel /> : null}
-        {panel === 'bridge' ? <Placeholder title="桥接接口" phase="P4" /> : null}
+        {panel === 'bridge' ? <BridgePanel /> : null}
         {panel === 'vision' ? <Placeholder title="多模态控制台" phase="P5" /> : null}
       </div>
     </div>

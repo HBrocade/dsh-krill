@@ -29,7 +29,7 @@ DeepSeek Harness（`dsh`）官方形态是 `dsh web` —— 起一个本地 HTTP
 | **插件** | 查询 / 安装 / 卸载 / 升级 / 启停 |
 | **更新** | dsh CLI、已装插件、桌面 App 自身、源码仓库，四类更新检测 |
 | **多模态** | 识图能力的本地（Ollama）与云端通道配置 |
-| **桥接** | 对外 HTTP + MCP 接口，让 Claude Code 等工具把 dsh 当第二意见来源 |
+| **桥接** | 本地 HTTP + stdio MCP shim，让 Claude Code 把 dsh 当第二意见来源 |
 | **日志** | 应用日志与后端 stdout/stderr 实时合流 |
 
 ## 架构
@@ -109,7 +109,7 @@ npm run dist       # 打 dmg（尚未配置，见下）
 - [x] **P1** 外壳骨架：后端 supervisor、双 view 窗口、托盘、日志面板
 - [x] **P2** 更新中心：dsh CLI / 插件 / 源码仓库 / App 自身，四类检测
 - [x] **P3** 插件管理器：清单合并、patch 体检、双通道安装、卸载四处清理、识别闭环
-- [ ] **P4** 桥接接口
+- [x] **P4** 桥接接口：本地 HTTP + stdio MCP shim，`dsh_ask` / `dsh_review`
 - [ ] **P5** 多模态控制台
 - [ ] **P6** 打包分发（`npm run dist` 目前跑不了，缺 electron-builder 配置）
 

@@ -216,3 +216,16 @@ body {
 .step-mark.ok { color: var(--ok); }
 .step-mark.bad { color: var(--danger); }
 .step-mark.skip { color: var(--text-faint); }
+
+/* ── 桥接面板 ────────────────────────────────────────────────────────────── */
+.code-block {
+  margin: 6px 0 0; padding: 11px 13px; border-radius: 8px;
+  background: var(--bg-sunken); border: 1px solid var(--line-soft);
+  font: 11.5px/1.7 "SF Mono", ui-monospace, Menlo, monospace;
+  color: var(--steel); white-space: pre-wrap; word-break: break-all; user-select: text;
+}
+.token { margin-top: 5px; letter-spacing: .04em; word-break: break-all; }
+.cfg-grid { display: grid; grid-template-columns: 128px 1fr; gap: 11px 14px; align-items: start; margin-top: 6px; }
+.cfg-grid > label { color: var(--text-dim); font-size: 12.5px; padding-top: 7px; }
+.cfg-grid .input { width: 100%; max-width: 380px; }
+.cfg-grid textarea.input { max-width: 560px; resize: vertical; }
