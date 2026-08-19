@@ -1,0 +1,65 @@
+# Krill 打包配置
+#
+# extraResources 的落位必须和代码里的查找路径对上：
+#   resources/dsh        → Contents/Resources/dsh          （locate.ts 找内嵌 dsh）
+#   resources/bridge-mcp → Contents/Resources/bridge-mcp   （桥接面板给出的接入命令）
+#   build/tray*.png      → Contents/Resources/build/       （tray.ts 找托盘图）
+appId: sh.dsh.krill
+productName: Krill
+copyright: Copyright © 2026 kam
+
+directories:
+  output: dist
+  buildResources: build
+
+# 只打构建产物与运行时依赖；源码、脚本、设计稿都不进包
+files:
+  - out/**/*
+  - package.json
+  - '!**/*.map'
+
+# 内嵌的 dsh 由 afterPack 钩子复制 —— extraResources 对整棵 node_modules
+# 静默不生效（退出码还是 0），见 scripts/after-pack.cjs 里的说明
+afterPack: scripts/after-pack.cjs
+
+extraResources:
+  - from: resources/bridge-mcp
+    to: bridge-mcp
+  - from: build/trayTemplate.png
+    to: build/trayTemplate.png
+  - from: build/trayTemplate@2x.png
+    to: build/trayTemplate@2x.png
+
+mac:
+  category: public.app-category.developer-tools
+  icon: build/icon.icns
+  target:
+    - target: dmg
+      arch: [arm64]
+    - target: zip
+      arch: [arm64]
+  # 无开发者证书：ad-hoc 签名即可本机运行。要分发给别人需要真证书 + 公证。
+  identity: null
+  # 内嵌的 dsh 里有 node 原生模块，强化运行时会挡住它们
+  hardenedRuntime: false
+  extendInfo:
+    # 后端只绑回环，不需要任何网络权限声明；这里只声明必要的
+    NSHumanReadableCopyright: Copyright © 2026 kam
+
+dmg:
+  title: Krill
+  contents:
+    - x: 140
+      y: 180
+      type: file
+    - x: 400
+      y: 180
+      type: link
+      path: /Applications
+
+# 未配置发布渠道 —— 与「更新中心」里 appUpdateFeedUrl 留空的设计一致
+publish: null
+
+# 内嵌 dsh 有 312MB，压缩会让打包慢很多而收益有限
+compression: store
+npmRebuild: false

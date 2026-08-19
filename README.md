@@ -74,7 +74,8 @@ npm run dev       # 启动
 ```bash
 npm run typecheck  # 主进程 + 渲染层分别 tsc
 npm run smoke      # 构建后启动，后端就绪即退出
-npm run dist       # 打 dmg（尚未配置，见下）
+npm run pack       # 只出未压缩的 .app（快，验证结构用）
+npm run dist       # 出 dmg + zip（arm64）
 ```
 
 开发期调试用的开关：
@@ -111,7 +112,7 @@ npm run dist       # 打 dmg（尚未配置，见下）
 - [x] **P3** 插件管理器：清单合并、patch 体检、双通道安装、卸载四处清理、识别闭环
 - [x] **P4** 桥接接口：两个端点（自描述文档 + 执行）+ stdio MCP shim
 - [ ] **P5** 多模态控制台
-- [ ] **P6** 打包分发（`npm run dist` 目前跑不了，缺 electron-builder 配置）
+- [x] **P6** 打包分发：dmg + zip（arm64），实测装入 /Applications 可启动
 
 ## 两个实现细节，供后来者避坑
 
