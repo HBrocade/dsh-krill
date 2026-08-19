@@ -1,0 +1,22 @@
+node_modules/
+out/
+dist/
+
+# 内嵌的 dsh 运行时（312MB，由 npm run embed 生成）
+resources/dsh/
+
+# TypeScript 增量构建缓存
+*.tsbuildinfo
+
+# 图标中间产物
+build/icon.iconset/
+
+# 设计过程稿（AI 概念图、像素版、各轮比例对比）—— 只留 build/whale.png 这个抠图产物
+build/concepts/
+
+# 实施计划，本地文档不入库
+PLAN.md
+
+*.log
+.DS_Store
+.openrouter-key

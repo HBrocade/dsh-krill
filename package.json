@@ -1,0 +1,46 @@
+{
+  "name": "dsh-krill",
+  "productName": "Krill",
+  "version": "0.1.0",
+  "description": "Krill —— DeepSeek Harness 的非官方桌面端：官方 Web 前端外壳 + 原生管理层（更新中心 / 插件管理 / 多模态控制台 / 对外桥接接口）",
+  "main": "out/main/index.js",
+  "author": "kam",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "start": "electron-vite preview",
+    "smoke": "electron-vite build && electron . --smoke-test",
+    "icons": "node scripts/gen-icons.mjs",
+    "embed": "node --experimental-strip-types scripts/embed-dsh.mjs",
+    "pack": "npm run build && electron-builder --dir",
+    "dist": "npm run build && electron-builder"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9",
+    "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^5.1.0",
+    "electron": "^43.4.1",
+    "electron-builder": "^26.15.3",
+    "electron-vite": "^5.0.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "sharp": "^0.35.3",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HBrocade/dsh-krill.git"
+  }
+}
