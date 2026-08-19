@@ -90,10 +90,10 @@ export async function start(): Promise<string> {
   setStatus({ dshBin: found.bin, dshVersion: found.version, dshSource: found.source })
 
   const args = [found.bin, '--profile', 'web', '--port', '0']
-  log(`spawn 后端：${found.nodeBin} ${args.join(' ')}（来源 ${found.source}）`)
+  log(`spawn 后端：${found.nodeBin} ${[...found.nodeFlags, ...args].join(' ')}（来源 ${found.source}）`)
   phase('starting')
 
-  const proc = spawn(found.nodeBin, found.needsElectronAsNode ? ['--no-warnings', ...args] : args, {
+  const proc = spawn(found.nodeBin, [...found.nodeFlags, ...args], {
     env: {
       ...process.env,
       ...(found.needsElectronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}),

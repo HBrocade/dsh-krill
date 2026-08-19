@@ -79,7 +79,7 @@ export function run(req: RunRequest, allowedRoots: readonly string[]): Promise<R
   return new Promise((resolve, reject) => {
     const proc = spawn(
       located.nodeBin,
-      located.needsElectronAsNode ? ['--no-warnings', ...argv] : argv,
+      [...located.nodeFlags, ...argv],
       {
         cwd,
         env: { ...process.env, ...(located.needsElectronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },

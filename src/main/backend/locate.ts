@@ -26,6 +26,30 @@ export interface LocatedDsh {
   version: string | null
   /** nodeBin 是 Electron 自身二进制时要设 ELECTRON_RUN_AS_NODE */
   needsElectronAsNode: boolean
+  /** spawn 时要插在脚本路径**之前**的 node flag，见 {@link nodeFlagsFor} */
+  nodeFlags: readonly string[]
+}
+
+/**
+ * 拿 Electron 二进制当 node 用时必须补 `--expose-internals`。
+ *
+ * cordis 的 loader 需要 Node 的内部 ESM loader（`ctx.loader.internal`），正常路径是
+ * 原生插件 `node-addon-require-builtin`。那个插件读 V8 的 embedder data，不是 N-API，
+ * 在 Electron 里直接报 `Unsupported/no-realm`，拿不到。
+ *
+ * 后果远不止「HMR 用不了」：`loader.internal` 一空，cordis 解析 loader entry 的裸包名
+ * 就退回从 **loader 自身所在文件** 往上溯，而不是从 profile 目录。in-box 插件恰好都在
+ * 运行时那棵树里所以毫无察觉，out-of-tree 插件（注入器、mod）则全部 ERR_MODULE_NOT_FOUND，
+ * 后端启动即崩 —— 而且崩得像是插件装坏了，跟真实原因（跑它的解释器不对）毫无关联。
+ *
+ * loader 自己留了旁路：`process.execArgv` 里有 `--expose-internals` 就直接
+ * `require('internal/modules/esm/loader')`，不碰原生插件。走真 node 时插件能加载，
+ * 不需要这个 flag。
+ *
+ * 三个 spawn 点（后端 / 桥接 runner / 插件命令）统一用这一份，避免下次只改一处。
+ */
+export function nodeFlagsFor(isElectron: boolean): readonly string[] {
+  return isElectron ? ['--no-warnings', '--expose-internals'] : []
 }
 
 function isExecutable(p: string): boolean {
@@ -77,7 +101,11 @@ function entryUnder(root: string): string | null {
 
 export function locateDsh(): LocatedDsh | null {
   const node = findNode()
-  const base = { nodeBin: node.bin, needsElectronAsNode: node.isElectron }
+  const base = {
+    nodeBin: node.bin,
+    needsElectronAsNode: node.isElectron,
+    nodeFlags: nodeFlagsFor(node.isElectron),
+  }
 
   const envBin = process.env.DSH_BIN
   if (envBin !== undefined && envBin !== '' && existsSync(envBin)) {

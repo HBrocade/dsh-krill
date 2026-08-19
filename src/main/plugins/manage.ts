@@ -55,7 +55,7 @@ export function runDshPlugin(
   return new Promise((resolve, reject) => {
     const proc = spawn(
       located.nodeBin,
-      located.needsElectronAsNode ? ['--no-warnings', ...argv] : argv,
+      [...located.nodeFlags, ...argv],
       {
         env: { ...process.env, ...(located.needsElectronAsNode ? { ELECTRON_RUN_AS_NODE: '1' } : {}) },
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -204,6 +204,82 @@ function linkRuntimeDeps(pluginDir: string): void {
   } catch (e) {
     log(`链接运行时依赖失败：${e instanceof Error ? e.message : String(e)}`, 'stderr')
   }
+}
+
+/**
+ * 列出 mod 内的子包（`<pack>/packages/*`）。
+ *
+ * 这是 pack-mod.mjs 打出来的 mod 布局：一个元包带若干真正的插件子包。
+ */
+function packSubPackages(packDir: string): Array<{ name: string; dir: string }> {
+  const out: Array<{ name: string; dir: string }> = []
+  const subs = join(packDir, 'packages')
+  let names: string[]
+  try {
+    names = readdirSync(subs)
+  } catch {
+    return out // 没有 packages/ 就是单包 mod，正常
+  }
+  for (const n of names) {
+    const dir = join(subs, n)
+    try {
+      if (!statSync(dir).isDirectory()) continue
+      out.push({ name: readPackageName(dir), dir })
+    } catch { /* 不是包，跳过 */ }
+  }
+  return out
+}
+
+/**
+ * 把 mod 的子包链进 profile 的 node_modules。
+ *
+ * mod 的 `cordis.patch.yml` 里 loader entry 用的是**子包**的名字
+ * （`@deepseek-ai/dsh-vision` 之类），但 pnpm 只会给元包建链接 ——
+ * 子包不是任何东西的依赖，没人管它。dsh 起来按名字解析，直接
+ * ERR_MODULE_NOT_FOUND。
+ *
+ * 为什么链到 profile 自己的 node_modules，而不是别处：它排在 dsh 维护的扁平回退目录
+ * `$DSH_HOME/profiles/node_modules` **之前**。那个目录里可能留着同名的陈旧链接 ——
+ * dsh 的 healProfilesModuleFallback 只维护自己依赖闭包内的名字，闭包外的旧链接
+ * （比如上一个 app 装过的同名包）会一直留着。不链在 profile 里就盖不过它，
+ * 表现是「装了新 mod，跑的还是旧代码」，且全程没有任何提示。
+ */
+function linkPackSubPackages(
+  profile: string,
+  packDir: string,
+  onOutput?: (line: string) => void,
+): void {
+  for (const sub of packSubPackages(packDir)) {
+    const target = join(profilesRoot(), profile, 'node_modules', ...sub.name.split('/'))
+    mkdirSync(dirname(target), { recursive: true })
+    try { rmSync(target, { recursive: true, force: true }) } catch { /* 本来就没有 */ }
+    try {
+      symlinkSync(sub.dir, target, 'dir')
+      onOutput?.(`子包 ${sub.name} 已链入 ${profile} 的 node_modules`)
+      log(`链接子包 ${sub.name} → ${sub.dir}`)
+    } catch (e) {
+      // 不静默：子包链不上，插件启动时才会以「找不到包」的形式炸出来，
+      // 那时已经离现场很远了
+      throw new Error(`子包 ${sub.name} 链接失败：${e instanceof Error ? e.message : String(e)}`)
+    }
+  }
+}
+
+/** 卸载时把子包链接一并清掉，否则下次装同名 mod 会撞上旧链接。 */
+function removeSubPackageLinks(profile: string, name: string): [boolean, string] {
+  const packDir = join(desktopPluginsRootLocal(), ...name.split('/'))
+  const subs = packSubPackages(packDir)
+  if (subs.length === 0) return [true, '该 mod 没有子包']
+  const removed: string[] = []
+  for (const sub of subs) {
+    const p = join(profilesRoot(), profile, 'node_modules', ...sub.name.split('/'))
+    let present = false
+    try { lstatSync(p); present = true } catch { present = false }
+    if (!present) continue
+    rmSync(p, { recursive: true, force: true })
+    removed.push(sub.name)
+  }
+  return [true, removed.length === 0 ? '子包链接不存在，跳过' : `已删除 ${removed.join('、')}`]
 }
 
 function readPackageName(dir: string): string {
@@ -375,6 +451,10 @@ export async function install(
     await runDshPlugin(profile, ['add', dir], onOutput)
   }
 
+  // 必须在通道安装之后 —— 官方通道是 `dsh plugin add` 跑 pnpm，
+  // pnpm 会重写 profile 的 node_modules，先链会被它抹掉
+  linkPackSubPackages(profile, dir, onOutput)
+
   const steps = await verifyRecognition(name, dir, profile, args.channel)
   const recognized = steps.every((s) => s.ok || s.skipped)
   log(`安装收尾识别闭环：${recognized ? '全部通过' : '有步骤未通过'}`)
@@ -386,7 +466,7 @@ export async function install(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 卸载：标记 + 四处清理 + 重启生效
+// 卸载：标记 + 五处清理 + 撤销代码级补丁 + 重启生效
 // ─────────────────────────────────────────────────────────────────────────────
 
 function injectorRegistryPath(): string {
@@ -483,7 +563,7 @@ function removeNodeModulesLink(profile: string, name: string): [boolean, string]
 
 export interface UninstallReport {
   name: string
-  /** 四处清理各自的结果，逐条如实报 */
+  /** 每一处清理各自的结果，逐条如实报 */
   steps: Array<{ label: string; detail: string; ok: boolean }>
   restartRequired: true
 }
@@ -544,6 +624,7 @@ export async function uninstall(
     ['注入器 registry.json', () => removeFromInjectorRegistry(name)],
     ['cordis.patch.yml 条目', () => removeFromPatch(profile, name)],
     ['node_modules 链接', () => removeNodeModulesLink(profile, name)],
+    ['子包 node_modules 链接', () => removeSubPackageLinks(profile, name)],
   ] as const) {
     try {
       const [ok, detail] = fn()
