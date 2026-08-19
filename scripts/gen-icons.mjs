@@ -65,19 +65,23 @@ console.log('[icons] build/icon.icns')
  * 托盘 template 图：纯黑剪影 + alpha，macOS 按菜单栏明暗自动反色。
  * 从抠图的 alpha 通道取轮廓，丢掉全部内部明暗 —— 22px 下那些只是噪声。
  */
-const silhouette = async (height) => {
-  // 按**高度**定尺寸，宽度随比例 —— 菜单栏高度固定，托盘图可以比它宽。
-  // 之前按 fit:inside 套进方框，22×22 的框只填出 22×12，白白丢掉一半高度。
-  const a = await sharp(whaleSrc).resize(null, height, { fit: 'inside' }).ensureAlpha()
+const silhouette = async (width) => {
+  // 按**宽度**定尺寸。
+  //
+  // 这里返工过一次：起初 fit:inside 套 22×22 得到 22×12，我以为「只填了一半高度」
+  // 是 bug，改成按高度 18px —— 宽度跟着 1.87:1 的比例窜到 34pt，菜单栏里比旁边
+  // 那些 16pt 的图标宽了近一倍，一眼就不合群。宽扁的图形本来就该按长边定尺寸，
+  // 22×12 从一开始就是对的。
+  const a = await sharp(whaleSrc).resize(width, null, { fit: 'inside' }).ensureAlpha()
     .extractChannel('alpha').toBuffer()
   const meta = await sharp(a).metadata()
   // alpha 当作蒙版，铺一层纯黑
   return sharp({ create: { width: meta.width, height: meta.height, channels: 3, background: '#000' } })
     .joinChannel(a).png()
 }
-// 18px 高：22px 菜单栏上下各留 2px 余量
-await (await silhouette(18)).toFile(join(buildDir, 'trayTemplate.png'))
-await (await silhouette(36)).toFile(join(buildDir, 'trayTemplate@2x.png'))
+// 22pt 宽 → 22×12，和菜单栏里 16pt 见方的图标分量相当
+await (await silhouette(22)).toFile(join(buildDir, 'trayTemplate.png'))
+await (await silhouette(44)).toFile(join(buildDir, 'trayTemplate@2x.png'))
 console.log('[icons] build/trayTemplate.png (+@2x)')
 
 /**
