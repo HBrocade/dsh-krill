@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { UpdateReport, OpResult } from '@shared/ipc'
+import type { NpmConfig, UpdateReport, OpResult } from '@shared/ipc'
 
 function ago(ts: number | null): string {
   if (ts === null) return '尚未检查'
@@ -15,9 +15,12 @@ export function UpdatesPanel(): React.JSX.Element {
   const [note, setNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [confirmed, setConfirmed] = useState(false)
   const [cliConfirm, setCliConfirm] = useState(false)
+  const [npm, setNpm] = useState<NpmConfig | null>(null)
+  const [npmDraft, setNpmDraft] = useState<NpmConfig | null>(null)
 
   useEffect(() => {
     void window.dsh['update:state']().then(setR)
+    void window.dsh['update:npmConfig']().then((c) => { setNpm(c); setNpmDraft(c) })
     return window.dsh.on('update:changed', setR)
   }, [])
 
@@ -102,6 +105,47 @@ export function UpdatesPanel(): React.JSX.Element {
             {[...new Set(r.cli.atRiskPatches.map((p) => p.plugin))].join('、')}。
             升级后会自动重打一遍；<b>贴不上的 mod 会被停用</b> —— 否则它 import
             的正是补丁加进去的导出，后端会直接起不来。停用后可以等 mod 更新后重装，或直接卸载。
+          </div>
+        ) : null}
+        {npmDraft !== null ? (
+          <div className="npm-net">
+            <div className="npm-net-title">
+              npm 网络设置
+              <span className="muted"> —— 只影响升级 dsh 运行时，留空则照 ~/.npmrc 办</span>
+            </div>
+            <label className="npm-net-row">
+              <span>源</span>
+              <input
+                value={npmDraft.registry}
+                placeholder="留空 = 用 npm 自己的配置"
+                onChange={(e) => { setNpmDraft({ ...npmDraft, registry: e.target.value }) }}
+              />
+            </label>
+            <label className="npm-net-row">
+              <span>代理</span>
+              <input
+                value={npmDraft.proxy}
+                placeholder="留空 = 照 ~/.npmrc；off = 显式直连；或填代理地址"
+                onChange={(e) => { setNpmDraft({ ...npmDraft, proxy: e.target.value }) }}
+              />
+            </label>
+            <div className="npm-net-foot">
+              <button
+                className="btn"
+                disabled={npm !== null
+                  && npmDraft.registry === npm.registry && npmDraft.proxy === npm.proxy}
+                onClick={() => {
+                  void act('npm', () => window.dsh['update:setNpmConfig'](npmDraft),
+                    () => 'npm 网络设置已保存，下次升级生效')
+                    .then(() => window.dsh['update:npmConfig']())
+                    .then((c) => { setNpm(c); setNpmDraft(c) })
+                }}
+              >保存</button>
+              <span className="muted">
+                拉一棵 300MB 的树时这项差别很大 —— 本机实测同一个包：
+                npmjs 直连 1.24MB/s、走本机代理 0.74MB/s、npmmirror 直连 2.6MB/s。
+              </span>
+            </div>
           </div>
         ) : null}
         {r.cli.upgradeStep !== null ? (

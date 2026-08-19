@@ -88,6 +88,17 @@ function registerIpc(): void {
   ipcMain.handle('update:check', () => guard(() => updates.checkAll({ force: true, reason: '面板手动' })))
   ipcMain.handle('update:upgradeCli', (_e, args: { confirm: boolean }) => guard(() => updates.upgradeCli(args)))
   ipcMain.handle('update:pullSourceRepo', () => guard(() => updates.pullSourceRepo()))
+  ipcMain.handle('update:npmConfig', () => {
+    const c = loadConfig()
+    return { registry: c.npmRegistry, proxy: c.npmProxy }
+  })
+  ipcMain.handle('update:setNpmConfig', (_e, p: Partial<{ registry: string; proxy: string }>) => guard(() => {
+    const next = saveConfig({
+      ...(p.registry === undefined ? {} : { npmRegistry: p.registry.trim() }),
+      ...(p.proxy === undefined ? {} : { npmProxy: p.proxy.trim() }),
+    })
+    return { registry: next.npmRegistry, proxy: next.npmProxy }
+  }))
   ipcMain.handle('update:appDownload', () => guard(() => updates.downloadApp()))
   ipcMain.handle('update:appInstall', () => guard(() => updates.installApp()))
 

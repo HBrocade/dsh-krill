@@ -157,6 +157,19 @@ body {
 .hint { margin-top: 9px; line-height: 1.65; }
 /* npm / git 的实时输出行：等宽，单行截断，不让长路径把卡片撑破 */
 /* 会造成损失但不是错误的提示：升级覆盖补丁之类 */
+/* 更新面板里的 npm 网络设置 */
+.npm-net { margin-top: 12px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 9px; }
+.npm-net-title { font-size: 13px; margin-bottom: 9px; }
+.npm-net-row { display: flex; align-items: center; gap: 10px; margin-bottom: 7px; font-size: 13px; }
+.npm-net-row > span { width: 34px; flex: none; }
+.npm-net-row > input {
+  flex: 1; min-width: 0; padding: 5px 9px; font-size: 12.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg); background: var(--bg-sunken);
+  border: 1px solid var(--line); border-radius: 6px;
+}
+.npm-net-foot { display: flex; align-items: flex-start; gap: 11px; margin-top: 9px; }
+.npm-net-foot > span { font-size: 12px; line-height: 1.6; }
 .warn-line {
   margin-top: 10px;
   padding: 9px 12px;

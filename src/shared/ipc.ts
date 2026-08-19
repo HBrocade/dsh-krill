@@ -138,6 +138,19 @@ export interface AppUpdate {
   error: string | null
 }
 
+/**
+ * 升级 dsh 运行时时给 npm 的网络参数。
+ *
+ * 两项都留空就是「照 ~/.npmrc 办」—— 默认行为，也是大多数人该有的行为。
+ * 单独开出来是因为日常开发的 npm 配置未必适合拉一棵 300MB 的树。
+ */
+export interface NpmConfig {
+  /** registry 地址；留空 = 用 npm 自己的配置 */
+  registry: string
+  /** 留空 = 用 npm 自己的配置；`off` = 显式直连；其他 = 代理地址 */
+  proxy: string
+}
+
 export interface UpdateReport {
   checkedAt: number | null
   checking: boolean
@@ -295,6 +308,8 @@ export interface InvokeMap {
   'update:state': () => UpdateReport
   'update:check': () => OpResult<UpdateReport>
   'update:upgradeCli': (args: { confirm: boolean }) => OpResult<string>
+  'update:npmConfig': () => NpmConfig
+  'update:setNpmConfig': (patch: Partial<NpmConfig>) => OpResult<NpmConfig>
   'update:pullSourceRepo': () => OpResult<string>
   'update:appDownload': () => OpResult
   'update:appInstall': () => OpResult
@@ -330,6 +345,7 @@ export const INVOKE_CHANNELS = [
   'backend:status', 'backend:restart', 'backend:stop',
   'log:tail',
   'update:state', 'update:check', 'update:upgradeCli', 'update:pullSourceRepo',
+  'update:npmConfig', 'update:setNpmConfig',
   'update:appDownload', 'update:appInstall',
   'plugins:state', 'plugins:refresh', 'plugins:install', 'plugins:uninstall',
   'plugins:setDisabled', 'plugins:patchDoctor',

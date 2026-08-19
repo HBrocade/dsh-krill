@@ -23,6 +23,27 @@ export interface DesktopConfig {
   bridgeToken: string
   /** 上次停留的面板，下次启动恢复 */
   lastPanel: string
+  /**
+   * 升级 dsh 运行时用的 npm registry。
+   *
+   * 留空 = 用 npm 自己的配置（~/.npmrc）。这是默认，也是大多数情况下该有的行为。
+   *
+   * 之所以要能单独配：npm 会连带用上 .npmrc 里的 proxy，而代理未必比直连快。
+   * 实测同一个 1.4MB 的包 —— npmjs 直连 1.24MB/s，走本机代理 0.74MB/s，
+   * npmmirror 直连 2.6MB/s。装一棵 300MB 的树，这个差别是几分钟和半小时的区别。
+   */
+  npmRegistry: string
+  /**
+   * 升级 dsh 运行时用的代理。
+   *
+   * `''`  = 用 npm 自己的配置（~/.npmrc 里的 proxy / https-proxy）
+   * `off` = 显式直连，绕开 .npmrc 里的代理
+   * 其他  = 具体代理地址，传给 npm 的 --proxy / --https-proxy
+   *
+   * 单独留这个开关是因为 .npmrc 里的代理是给日常开发配的，未必适合拉一棵 300MB 的树 ——
+   * 实测同一个包走本机代理 0.74MB/s，直连 1.24MB/s。
+   */
+  npmProxy: string
 }
 
 const DEFAULTS: DesktopConfig = {
@@ -36,6 +57,8 @@ const DEFAULTS: DesktopConfig = {
   },
   bridgeToken: '',
   lastPanel: 'chat',
+  npmRegistry: '',
+  npmProxy: '',
 }
 
 let cache: DesktopConfig | null = null
