@@ -28,7 +28,6 @@ DeepSeek Harness（`dsh`）官方形态是 `dsh web` —— 起一个本地 HTTP
 | **会话** | 官方 dsh React SPA，零改动嵌入 |
 | **插件** | 查询 / 安装 / 卸载 / 升级 / 启停 |
 | **更新** | dsh CLI、已装插件、桌面 App 自身、源码仓库，四类更新检测 |
-| **多模态** | 识图能力的本地（Ollama）与云端通道配置 |
 | **桥接** | 本地 HTTP + stdio MCP shim，让 Claude Code 把 dsh 当第二意见来源 |
 | **日志** | 应用日志与后端 stdout/stderr 实时合流 |
 
@@ -42,13 +41,13 @@ DeepSeek Harness（`dsh`）官方形态是 `dsh web` —— 起一个本地 HTTP
 │ │ 会 │                                            │   │
 │ │ 插 │   WebContentsView                          │   │
 │ │ 更 │   http://127.0.0.1:<自动端口>               │   │
-│ │ 多 │   官方 dsh React SPA（零改动）              │   │
-│ │ 桥 │                                            │   │
+│ │ 桥 │   官方 dsh React SPA（零改动）              │   │
 │ │ 日 │                                            │   │
+│ │    │                                            │   │
 │ └────┴────────────────────────────────────────────┘   │
 │   ↑ 外壳的 React 渲染层（BaseWindow 的底层 view）      │
 └───────────────────────────────────────────────────────┘
-      主进程：supervisor / update / plugins / vision / bridge
+      主进程：supervisor / update / plugins / bridge
               │ spawn（隐藏）            │ HTTP :bridgePort
         dsh web（npm 内嵌）        外部调用方（Claude Code）
 ```
@@ -111,7 +110,7 @@ npm run dist       # 出 dmg + zip（arm64）
 - [x] **P2** 更新中心：dsh CLI / 插件 / 源码仓库 / App 自身，四类检测
 - [x] **P3** 插件管理器：清单合并、patch 体检、双通道安装、卸载四处清理、识别闭环
 - [x] **P4** 桥接接口：两个端点（自描述文档 + 执行）+ stdio MCP shim
-- [ ] **P5** 多模态控制台
+- [x] **P5** 改为插件承载 —— 多模态控制台不做成原生面板，由插件自己提供
 - [x] **P6** 打包分发：dmg + zip（arm64），实测装入 /Applications 可启动
 
 ## 两个实现细节，供后来者避坑
