@@ -18,7 +18,7 @@ import {
 } from 'node:fs'
 import { join, basename, dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
-import { stringify } from 'yaml'
+import { stringify, parse as parseYaml } from 'yaml'
 import { locateDsh } from '../backend/locate.ts'
 import { log } from '../backend/log-ring.ts'
 import { profilesRoot, readManifest } from '../update/plugins.ts'
@@ -638,12 +638,96 @@ export async function uninstall(
   return { name, steps, restartRequired: true }
 }
 
+/**
+ * 一个 mod 实际贡献的 loader entry id。
+ *
+ * **不能拿包名末段当 id。** bundle 型 mod 在自己的 cordis.patch.yml 里插的行用的是
+ * 它承载的那些包的短名 —— dsh-vision-pack 插的是 `vision` 和 `ui-vision`，
+ * 和包名毫无关系。按包名写 disabled 会写进一条谁也不匹配的条目：
+ * 界面显示「已禁用」，实际毫无作用，而且这种失败不会报错。
+ *
+ * @returns 解析到的 entry id；不是 bundle 或读不出来时返回空数组，由调用方回退。
+ */
+function bundleEntryIds(pluginDir: string): string[] {
+  let patchRel: string
+  try {
+    const pkg = JSON.parse(readFileSync(join(pluginDir, 'package.json'), 'utf8')) as {
+      dsh?: { bundle?: { patch?: unknown } }
+    }
+    const p = pkg.dsh?.bundle?.patch
+    if (typeof p !== 'string' || p === '') return []
+    patchRel = p
+  } catch { return [] }
+
+  try {
+    const raw = readFileSync(join(pluginDir, patchRel), 'utf8')
+    const doc = parseYaml(raw) as unknown
+    if (!Array.isArray(doc)) return []
+    const ids: string[] = []
+    for (const layer of doc) {
+      if (layer === null || typeof layer !== 'object') continue
+      const l = layer as { id?: unknown; insert?: unknown }
+      if (typeof l.id === 'string') ids.push(l.id)
+      if (Array.isArray(l.insert)) {
+        for (const e of l.insert) {
+          if (e !== null && typeof e === 'object' && typeof (e as { id?: unknown }).id === 'string') {
+            ids.push((e as { id: string }).id)
+          }
+        }
+      }
+    }
+    return ids
+  } catch { return [] }
+}
+
+/**
+ * 直接按 entry id 写 / 清 disabled 标记。
+ *
+ * profile 自己的 patch 层排在所有 bundle 层之后，所以这里写的 disabled
+ * 能盖住 bundle 插进来的行 —— 这是「停用一个 mod 但保留安装」的唯一可靠做法。
+ */
+export function setEntriesDisabled(profile: string, ids: readonly string[], disabled: boolean): void {
+  if (ids.length === 0) return
+  const file = patch.patchPath(profile)
+  if (existsSync(file) && patch.hasCustomTags(readFileSync(file, 'utf8'))) {
+    throw new Error('patch 含自定义 YAML 标签，拒绝自动改写 —— 请手动增删 disabled 条目')
+  }
+  const entries = patch.read(profile)
+  for (const id of ids) {
+    const idx = entries.findIndex((e) => e.id === id)
+    if (disabled) {
+      if (idx >= 0) entries[idx] = { ...entries[idx], disabled: true }
+      else entries.push({ id, disabled: true })
+    } else if (idx >= 0) {
+      const e = entries[idx]!
+      const rest = Object.keys(e).filter((k) => k !== 'id' && k !== 'disabled')
+      if (rest.length === 0) entries.splice(idx, 1)
+      else entries[idx] = { ...e, disabled: false }
+    }
+  }
+  if (existsSync(file)) copyFileSync(file, `${file}.bak-${String(Date.now())}`)
+  mkdirSync(join(profilesRoot(), profile), { recursive: true })
+  writeFileSync(file, entries.length === 0 ? '[]\n' : stringify(entries), 'utf8')
+  log(`${disabled ? '禁用' : '启用'} loader 条目：${ids.join('、')}（重启后生效）`)
+}
+
+/** 按包名找到 mod 目录 —— 卸载/停用时只拿得到名字。 */
+export function pluginDirOf(name: string): string {
+  return join(desktopPluginsRootLocal(), ...name.split('/'))
+}
+
 /** 禁用 / 启用：写 patch 的 disabled 标记，同样要重启生效。 */
 export function setDisabled(args: { name: string; disabled: boolean; profile?: string }): string {
   const profile = args.profile ?? DEFAULT_PROFILE
   const file = patch.patchPath(profile)
   if (existsSync(file) && patch.hasCustomTags(readFileSync(file, 'utf8'))) {
     throw new Error('patch 含自定义 YAML 标签，拒绝自动改写 —— 请手动增删 disabled 条目')
+  }
+  // bundle 型 mod 用它自己 patch 里声明的 entry id；拿不到才回退到包名末段
+  const declared = bundleEntryIds(pluginDirOf(args.name))
+  if (declared.length > 0) {
+    setEntriesDisabled(profile, declared, args.disabled)
+    return `${args.disabled ? '已禁用' : '已启用'} ${declared.join('、')}，重启后端后生效`
   }
   const shortId = args.name.split('/').pop() ?? args.name
   const entries = patch.read(profile)

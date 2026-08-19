@@ -85,6 +85,14 @@ export interface CliUpdate {
   upgrading: boolean
   /** 升级的最新一行输出。npm 装几分钟不出声，面板会像卡死。 */
   upgradeStep: string | null
+  /**
+   * 升级会连带覆盖掉的代码级补丁（mod → 被打补丁的包）。
+   *
+   * 非空时升级需要二次确认：npm 覆盖整棵树，这些补丁一并没；补丁是按当前版本
+   * 写的，新版本未必贴得上。贴不上的 mod 会在升级后被自动停用（否则它 import
+   * 补丁加进去的导出，后端直接起不来）。
+   */
+  atRiskPatches: Array<{ plugin: string; package: string }>
 }
 
 /**
@@ -286,7 +294,7 @@ export interface InvokeMap {
 
   'update:state': () => UpdateReport
   'update:check': () => OpResult<UpdateReport>
-  'update:upgradeCli': () => OpResult<string>
+  'update:upgradeCli': (args: { confirm: boolean }) => OpResult<string>
   'update:pullSourceRepo': () => OpResult<string>
   'update:appDownload': () => OpResult
   'update:appInstall': () => OpResult

@@ -14,6 +14,7 @@ export function UpdatesPanel(): React.JSX.Element {
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [confirmed, setConfirmed] = useState(false)
+  const [cliConfirm, setCliConfirm] = useState(false)
 
   useEffect(() => {
     void window.dsh['update:state']().then(setR)
@@ -78,16 +79,31 @@ export function UpdatesPanel(): React.JSX.Element {
               // 本地状态清零、按钮变回可点，再点一次就是第二个 npm 往同一个目录写
               disabled={busy !== null || r.cli.upgrading}
               onClick={() => {
-                void act('cli', () => window.dsh['update:upgradeCli'](),
+                // 有补丁会被覆盖时先要一次确认。主进程也拦（confirm 必须为 true），
+                // 界面这层只是把代价说清楚
+                if (r.cli.atRiskPatches.length > 0 && !cliConfirm) { setCliConfirm(true); return }
+                setCliConfirm(false)
+                void act('cli', () => window.dsh['update:upgradeCli']({ confirm: true }),
                   (v) => `已升级到 ${String(v)}，重启后端后生效`)
               }}
             >
-              {r.cli.upgrading || busy === 'cli' ? '升级中…' : `升级到 ${r.cli.latest}`}
+              {r.cli.upgrading || busy === 'cli'
+                ? '升级中…'
+                : cliConfirm ? '确认升级？再点一次'
+                  : `升级到 ${r.cli.latest}`}
             </button>
           ) : (
             <span className="tag">{r.cli.error !== null ? '检查失败' : '已是最新'}</span>
           )}
         </div>
+        {r.cli.upgradable && r.cli.atRiskPatches.length > 0 ? (
+          <div className="warn-line">
+            升级会覆盖 {r.cli.atRiskPatches.length} 处代码级补丁：
+            {[...new Set(r.cli.atRiskPatches.map((p) => p.plugin))].join('、')}。
+            升级后会自动重打一遍；<b>贴不上的 mod 会被停用</b> —— 否则它 import
+            的正是补丁加进去的导出，后端会直接起不来。停用后可以等 mod 更新后重装，或直接卸载。
+          </div>
+        ) : null}
         {r.cli.upgradeStep !== null ? (
           // npm 装几分钟一声不吭，没有这行就跟卡死一模一样
           <div className="muted hint mono-line">{r.cli.upgradeStep}</div>

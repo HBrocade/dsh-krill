@@ -13,6 +13,7 @@ import { log } from '../backend/log-ring.ts'
 import { loadConfig } from '../config/store.ts'
 import { desktopPluginsRoot } from '../plugins/inventory.ts'
 import * as corePatch from '../plugins/core-patch.ts'
+import * as manage from '../plugins/manage.ts'
 import { readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { UpdateReport } from '@shared/ipc'
@@ -22,7 +23,7 @@ let report: UpdateReport = {
   checking: false,
   cli: {
     current: null, latest: null, upgradable: false, error: null,
-    upgrading: false, upgradeStep: null,
+    upgrading: false, upgradeStep: null, atRiskPatches: [],
   },
   plugins: [],
   sourceRepo: { path: '', exists: false, branch: null, behind: 0, ahead: 0, dirty: false, error: null },
@@ -85,7 +86,12 @@ export function checkAll(options: { force?: boolean; reason?: string } = {}): Pr
       checking: false,
       checkedAt: Date.now(),
       // 瞬时的升级状态原样带过去 —— 定时检查可能正落在升级进行中
-      cli: { ...cliResult, upgrading: report.cli.upgrading, upgradeStep: report.cli.upgradeStep },
+      cli: {
+        ...cliResult,
+        upgrading: report.cli.upgrading,
+        upgradeStep: report.cli.upgradeStep,
+        atRiskPatches: appliedCorePatches(),
+      },
       plugins: pluginResult,
       sourceRepo: repoResult,
       app: appResult,
@@ -130,67 +136,134 @@ export function pendingCount(): number {
 }
 
 /**
- * 列出当前**已应用**的代码级补丁。
+ * 扫出所有声明了代码级补丁的 mod。
  *
- * 升级运行时是 `npm install --prefix` 覆盖整棵树，这些补丁会被一并冲掉，
- * 而且没有任何东西会自动重打。更要命的是：mod 的插件代码 import 的正是补丁加进去的
- * 导出（`IMAGE_PLACEHOLDER` 之类），冲掉之后后端不是「功能失效」而是**根本起不来**。
- * 所以升级前必须拦一道。
+ * 目录布局是 `<root>/<name>` 或 `<root>/@scope/<name>`，所以只需要下探一层。
  */
-function appliedCorePatches(): Array<{ plugin: string; package: string }> {
+function modsWithCorePatches(): Array<{ dir: string; name: string }> {
   const root = desktopPluginsRoot()
   if (!existsSync(root)) return []
-  const dirs: string[] = []
-  const scan = (base: string, depth: number): void => {
+  const out: Array<{ dir: string; name: string }> = []
+  const scan = (base: string, rel: string, depth: number): void => {
     let names: string[]
     try { names = readdirSync(base) } catch { return }
     for (const n of names) {
       const d = join(base, n)
-      if (existsSync(join(d, 'package.json'))) dirs.push(d)
-      else if (depth > 0) scan(d, depth - 1)   // @scope/ 那一层
+      const r = rel === '' ? n : `${rel}/${n}`
+      if (existsSync(join(d, 'package.json'))) {
+        if (corePatch.readDecls(d).length > 0) out.push({ dir: d, name: r })
+      } else if (depth > 0) {
+        scan(d, r, depth - 1)   // @scope/ 那一层
+      }
     }
   }
-  scan(root, 1)
+  scan(root, '', 1)
+  return out
+}
+
+/**
+ * 当前**已应用**的代码级补丁。
+ *
+ * 升级运行时是 `npm install --prefix` 覆盖整棵树，这些补丁会被一并冲掉。
+ * 面板据此决定要不要二次确认。
+ */
+function appliedCorePatches(): Array<{ plugin: string; package: string }> {
   const out: Array<{ plugin: string; package: string }> = []
-  for (const d of dirs) {
-    for (const st of corePatch.inspect(d)) {
-      if (st.applied) out.push({ plugin: d.slice(root.length + 1), package: st.package })
+  for (const m of modsWithCorePatches()) {
+    for (const st of corePatch.inspect(m.dir)) {
+      if (st.applied) out.push({ plugin: m.name, package: st.package })
     }
   }
   return out
 }
 
 /**
+ * 升级后把每个 mod 的代码级补丁重打一遍，贴不上的就地停用。
+ *
+ * 为什么必须停用而不是放着：mod 的插件代码 import 的正是补丁加进去的导出
+ * （`IMAGE_PLACEHOLDER` 之类）。补丁没了而 loader 行还在，后端不是「功能降级」
+ * 而是**启动即崩**，整个 App 不可用。停掉 loader 行至少让人能开起来，
+ * 再决定是等 mod 更新还是卸载。
+ *
+ * 停用走 mod 自己 patch 里声明的 entry id —— 不是包名，见 bundleEntryIds。
+ */
+async function reconcileMods(
+  mods: Array<{ dir: string; name: string }>,
+  onOutput: (line: string) => void,
+): Promise<string[]> {
+  const disabled: string[] = []
+  for (const m of mods) {
+    let outcomes: corePatch.PatchOutcome[]
+    try {
+      outcomes = await corePatch.apply(m.dir, onOutput)
+    } catch (e) {
+      outcomes = [{ package: '(全部)', ok: false, detail: e instanceof Error ? e.message : String(e) }]
+    }
+    const bad = outcomes.filter((o) => !o.ok)
+    if (bad.length === 0) {
+      if (outcomes.length > 0) log(`${m.name}：${String(outcomes.length)} 处补丁已在新版本上重新应用`)
+      continue
+    }
+    // 半应用状态比没应用更难查 —— 先撤干净再停用
+    try { await corePatch.revert(m.dir, onOutput) } catch { /* 尽力而为 */ }
+    try {
+      manage.setDisabled({ name: m.name, disabled: true })
+      disabled.push(m.name)
+      log(`${m.name} 与新版本冲突，已停用：`
+        + bad.map((b) => `${b.package} ${b.detail}`).join('；'), 'stderr')
+      onOutput(`⚠ ${m.name} 的补丁贴不上新版本，已停用（${String(bad.length)} 处失败）`)
+    } catch (e) {
+      log(`${m.name} 冲突且停用失败：${e instanceof Error ? e.message : String(e)}`, 'stderr')
+      onOutput(`✗ ${m.name} 冲突，且自动停用失败 —— 后端可能起不来，需要手动处理`)
+    }
+  }
+  return disabled
+}
+
+/**
  * 一键升级 dsh CLI。升级完不自动重启后端 —— 何时重启由用户决定。
  *
- * 重复调用复用同一次升级：面板切 tab 会让按钮重新可点，两次 `npm install --prefix`
- * 同时往一个目录写会互相踩，装出一棵谁也说不清的树。
+ * 重复调用复用同一次升级：面板切 tab 会让按钮重新可点，两次
+ * `npm install --prefix` 同时往一个目录写会互相踩，装出一棵谁也说不清的树。
+ *
+ * @param args.confirm 有代码级补丁会被覆盖时必须为 true。这不是走过场 ——
+ *   升级会停用贴不上的 mod，用户得先知道要付这个代价。
  */
-export function upgradeCli(): Promise<string> {
+export function upgradeCli(args: { confirm: boolean } = { confirm: false }): Promise<string> {
   if (upgradeInFlight !== null) return upgradeInFlight
 
   const latest = report.cli.latest
   if (latest === null) return Promise.reject(new Error('还没查到可用版本，先跑一次检查'))
   if (!report.cli.upgradable) return Promise.reject(new Error(`当前已是 ${report.cli.current}，无需升级`))
 
-  const applied = appliedCorePatches()
-  if (applied.length > 0) {
-    const list = applied.map((a) => `${a.plugin} → ${a.package}`).join('；')
+  const mods = modsWithCorePatches()
+  const atRisk = appliedCorePatches()
+  if (atRisk.length > 0 && !args.confirm) {
     return Promise.reject(new Error(
-      `已拦下升级：运行时上有 ${String(applied.length)} 处代码级补丁正在生效（${list}），`
-      + '升级会连同整棵树把它们覆盖掉。这些补丁是按当前版本写的，新版本未必贴得上；'
-      + '而 mod 的插件代码 import 的就是补丁加进去的导出 —— 冲掉之后后端会直接起不来，'
-      + '不是功能降级。要升级请先卸载相关 mod，升完再装回（届时 mod 需针对新版本重新打包）。',
+      `需要确认：运行时上有 ${String(atRisk.length)} 处代码级补丁在生效，升级会连同整棵树覆盖掉。`
+      + '升级后会自动重打一遍，贴不上的 mod 将被停用（否则后端起不来）。再点一次确认。',
     ))
   }
 
   patch({ cli: { ...report.cli, upgrading: true, upgradeStep: '正在启动 npm…' } })
-  upgradeInFlight = cli.install(latest, (line) => {
+  const step = (line: string): void => {
     patch({ cli: { ...report.cli, upgradeStep: line.slice(0, 200) } })
-  })
-    .then((got) => {
-      patch({ cli: { ...report.cli, current: got, upgradable: false, upgrading: false, upgradeStep: null } })
-      return got
+  }
+  upgradeInFlight = cli.install(latest, step)
+    .then(async (got) => {
+      step('正在把 mod 的代码级补丁重打到新版本上…')
+      const off = await reconcileMods(mods, step)
+      patch({
+        cli: {
+          ...report.cli,
+          current: got, upgradable: false,
+          upgrading: false, upgradeStep: null,
+          atRiskPatches: appliedCorePatches(),
+        },
+      })
+      return off.length === 0
+        ? got
+        : `${got}（${off.join('、')} 的补丁贴不上新版本，已停用 —— 可等 mod 更新后重装，或直接卸载）`
     })
     .catch((e: unknown) => {
       patch({ cli: { ...report.cli, upgrading: false, upgradeStep: null } })

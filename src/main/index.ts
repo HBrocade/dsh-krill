@@ -86,7 +86,7 @@ function registerIpc(): void {
 
   ipcMain.handle('update:state', () => updates.getReport())
   ipcMain.handle('update:check', () => guard(() => updates.checkAll({ force: true, reason: '面板手动' })))
-  ipcMain.handle('update:upgradeCli', () => guard(() => updates.upgradeCli()))
+  ipcMain.handle('update:upgradeCli', (_e, args: { confirm: boolean }) => guard(() => updates.upgradeCli(args)))
   ipcMain.handle('update:pullSourceRepo', () => guard(() => updates.pullSourceRepo()))
   ipcMain.handle('update:appDownload', () => guard(() => updates.downloadApp()))
   ipcMain.handle('update:appInstall', () => guard(() => updates.installApp()))

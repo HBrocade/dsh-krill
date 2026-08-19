@@ -156,6 +156,16 @@ body {
 .muted { color: var(--text-faint); font-size: 12px; }
 .hint { margin-top: 9px; line-height: 1.65; }
 /* npm / git 的实时输出行：等宽，单行截断，不让长路径把卡片撑破 */
+/* 会造成损失但不是错误的提示：升级覆盖补丁之类 */
+.warn-line {
+  margin-top: 10px;
+  padding: 9px 12px;
+  border: 1px solid rgba(220, 170, 60, .35);
+  background: rgba(220, 170, 60, .08);
+  border-radius: 8px;
+  line-height: 1.7;
+  font-size: 13px;
+}
 .mono-line {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 12px;
