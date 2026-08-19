@@ -233,14 +233,15 @@ export interface VisionState {
 // 对外桥接接口
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * 桥接配置 —— 刻意只有一个开关。
+ *
+ * 端口、超时、并发、目录范围都用固定默认值，不做成用户可调项：
+ * 这个接口的定位是「直接用 app 正在用的那套」，多一个旋钮就多一处
+ * 要解释、要出错的地方。token 自动生成并嵌进接入命令，用户不用看见。
+ */
 export interface BridgeConfig {
   enabled: boolean
-  /** 0 = 由 OS 分配 */
-  port: number
-  /** 允许作为工作目录的白名单；空数组 = 只允许请求显式传入且真实存在的目录 */
-  allowedRoots: string[]
-  timeoutMs: number
-  maxConcurrent: number
 }
 
 export interface BridgeStatus {
@@ -255,6 +256,8 @@ export interface BridgeStatus {
   mcpCommand: string
   /** 当前在用的模型描述 —— 与聊天共用同一份全局配置，调用方无需指定 */
   model: string
+  /** 固定不变的运行参数，仅供面板只读展示 */
+  limits: { timeoutMs: number; maxConcurrent: number }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

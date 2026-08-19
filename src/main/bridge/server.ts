@@ -23,6 +23,12 @@ import type { BridgeStatus } from '@shared/ipc'
 
 /** 请求体上限：diff 可能不小，但 2MB 已经远超正常 code review 的量 */
 const MAX_BODY = 2 * 1024 * 1024
+/** 单个任务超时：5 分钟。固定值 —— 不做成配置项 */
+const TIMEOUT_MS = 300_000
+/** 并发上限：2。够用，又不至于让一堆任务把机器拖死 */
+const MAX_CONCURRENT = 2
+/** 端口由系统分配 —— 固定端口只会带来「被占用」这一类无谓的故障 */
+const PORT = 0
 
 let server: Server | null = null
 let token = ''
@@ -163,11 +169,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       ],
       notes: [
         '任务失败不用 HTTP 错误码表达 —— 一律 200，看 exitCode 与 text 自己判断。',
-        '并发上限 ' + String(cfg.maxConcurrent) + '，超了返回 429。',
-        '默认超时 ' + String(cfg.timeoutMs) + ' 毫秒。',
-        cfg.allowedRoots.length === 0
-          ? 'cwd 不限根目录，但必须是真实存在的目录。'
-          : 'cwd 必须位于白名单内：' + cfg.allowedRoots.join('、'),
+        '并发上限 ' + String(MAX_CONCURRENT) + '，超了返回 429。',
+        '默认超时 ' + String(TIMEOUT_MS) + ' 毫秒。',
+        'cwd 不限根目录，但必须是真实存在的目录。',
       ],
       runtime: { inflight: runner.inflightCount(), totalServed },
     })
@@ -175,8 +179,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (path === '/v1/ask' && req.method === 'POST') {
-    if (runner.inflightCount() >= cfg.maxConcurrent) {
-      send(res, 429, { error: `并发已满（上限 ${String(cfg.maxConcurrent)}），稍后再试` })
+    if (runner.inflightCount() >= MAX_CONCURRENT) {
+      send(res, 429, { error: `并发已满（上限 ${String(MAX_CONCURRENT)}），稍后再试` })
       return
     }
     let body: Record<string, unknown>
@@ -191,8 +195,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const result = await runner.run({
         prompt: String(body['prompt'] ?? ''),
         cwd: typeof body['cwd'] === 'string' ? body['cwd'] : undefined,
-        timeoutMs: typeof body['timeoutMs'] === 'number' ? body['timeoutMs'] : cfg.timeoutMs,
-      }, cfg.allowedRoots)
+        timeoutMs: typeof body['timeoutMs'] === 'number' ? body['timeoutMs'] : TIMEOUT_MS,
+      }, [])
       totalServed += 1
       emit()
       // 任务本身失败（非零退出）不是 HTTP 错误 —— 调用方要拿到文本与退出码自己判断
@@ -229,6 +233,7 @@ export function status(): BridgeStatus {
       : `claude mcp add dsh --env KRILL_BRIDGE=http://127.0.0.1:${String(port)} `
         + `--env KRILL_TOKEN=${ensureToken()} -- node <Krill.app>/Contents/Resources/bridge-mcp/index.mjs`,
     model: currentModel.describe(),
+    limits: { timeoutMs: TIMEOUT_MS, maxConcurrent: MAX_CONCURRENT },
   }
 }
 
@@ -255,11 +260,11 @@ export function start(): Promise<BridgeStatus> {
       reject(new Error(`桥接服务启动失败：${e.message}`))
     })
     // 只绑回环 —— 绝不监听 0.0.0.0
-    s.listen(cfg.port, '127.0.0.1', () => {
+    s.listen(PORT, '127.0.0.1', () => {
       server = s
       lastError = null
       const addr = s.address()
-      const port = typeof addr === 'object' && addr !== null ? addr.port : cfg.port
+      const port = typeof addr === 'object' && addr !== null ? addr.port : PORT
       log(`桥接接口已启动：http://127.0.0.1:${String(port)}（仅回环，需 Bearer token）`)
       emit()
       resolve(status())
@@ -280,6 +285,11 @@ export function stop(): void {
 export async function reconcile(): Promise<BridgeStatus> {
   const cfg = loadConfig().bridge
   if (cfg.enabled && server === null) return start()
-  if (!cfg.enabled && server !== null) stop()
+  if (!cfg.enabled && server !== null) {
+    // 用户显式关闭时，连开发开关的强制启用一并解除 ——
+    // 否则点了「关闭接口」服务还在跑，按钮会一直翻转不过来
+    forced = false
+    stop()
+  }
   return status()
 }

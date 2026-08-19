@@ -33,10 +33,6 @@ const DEFAULTS: DesktopConfig = {
   bridge: {
     // 对外接口默认关闭：它能在本机执行任务，必须由用户显式打开
     enabled: false,
-    port: 0,
-    allowedRoots: [],
-    timeoutMs: 300_000,
-    maxConcurrent: 2,
   },
   bridgeToken: '',
   lastPanel: 'chat',
@@ -48,25 +44,49 @@ function configPath(): string {
   return join(app.getPath('userData'), 'config.json')
 }
 
-/** 逐字段合并，缺字段用默认值补 —— 老版本配置文件升级后不至于缺键。 */
+/**
+ * 逐字段合并，缺字段用默认值补 —— 老版本配置文件升级后不至于缺键。
+ *
+ * bridge 段刻意**只保留已知键**：它曾经有 port / timeoutMs / maxConcurrent /
+ * allowedRoots，后来收敛成只剩一个开关。单纯展开旧对象会把这些废弃键一直
+ * 带下去，配置文件越攒越脏，看的人也搞不清哪些还生效。
+ */
 function merge(raw: unknown): DesktopConfig {
   if (raw === null || typeof raw !== 'object') return { ...DEFAULTS }
   const r = raw as Partial<DesktopConfig>
-  return {
-    ...DEFAULTS,
-    ...r,
-    bridge: { ...DEFAULTS.bridge, ...(r.bridge ?? {}) },
+  const bridgeRaw = (r.bridge ?? {}) as Record<string, unknown>
+  const bridge: DesktopConfig['bridge'] = {
+    enabled: typeof bridgeRaw['enabled'] === 'boolean' ? bridgeRaw['enabled'] : DEFAULTS.bridge.enabled,
   }
+  return { ...DEFAULTS, ...r, bridge }
 }
 
 export function loadConfig(): DesktopConfig {
   if (cache !== null) return cache
+  let raw: unknown = null
   try {
-    cache = merge(JSON.parse(readFileSync(configPath(), 'utf8')))
+    raw = JSON.parse(readFileSync(configPath(), 'utf8'))
   } catch {
     cache = { ...DEFAULTS }
+    return cache
   }
-  return cache
+  const merged = merge(raw)
+  cache = merged
+  // 读到的和规范化后的不一致（多了废弃键、少了新键），就自愈重写一次。
+  // 否则废弃键要等到下一次恰好有人写配置才会被清掉，中间一直脏着。
+  if (JSON.stringify(raw) !== JSON.stringify(merged)) {
+    try { writeAtomic(merged) } catch { /* 只是清理，失败不影响运行 */ }
+  }
+  return merged
+}
+
+/** 原子写：先写临时文件再 rename，避免写一半被杀留下半截 JSON。 */
+function writeAtomic(cfg: DesktopConfig): void {
+  const target = configPath()
+  const tmp = `${target}.tmp`
+  mkdirSync(dirname(target), { recursive: true })
+  writeFileSync(tmp, JSON.stringify(cfg, null, 2), 'utf8')
+  renameSync(tmp, target)
 }
 
 /**
@@ -76,11 +96,7 @@ export function loadConfig(): DesktopConfig {
 export function saveConfig(patch: Partial<DesktopConfig>): DesktopConfig {
   const next = merge({ ...loadConfig(), ...patch })
   cache = next
-  const target = configPath()
-  const tmp = `${target}.tmp`
-  mkdirSync(dirname(target), { recursive: true })
-  writeFileSync(tmp, JSON.stringify(next, null, 2), 'utf8')
-  renameSync(tmp, target)
+  writeAtomic(next)
   return next
 }
 
