@@ -27,7 +27,10 @@ export async function check(): Promise<SourceRepoUpdate> {
   const base: SourceRepoUpdate = {
     path, exists: false, branch: null, behind: 0, ahead: 0, dirty: false, error: null,
   }
-  if (!existsSync(path)) return base
+  if (!existsSync(path)) {
+    log(`源码仓库检查：路径不存在，跳过（${path}）`)
+    return base
+  }
 
   try {
     await git(path, ['rev-parse', '--is-inside-work-tree'], 5_000)
@@ -42,7 +45,7 @@ export async function check(): Promise<SourceRepoUpdate> {
     const behind = Number(await git(path, ['rev-list', '--count', `HEAD..${ref}`], 15_000))
     const ahead = Number(await git(path, ['rev-list', '--count', `${ref}..HEAD`], 15_000))
     const status = await git(path, ['status', '--porcelain'], 15_000)
-    return {
+    const result: SourceRepoUpdate = {
       path, exists: true,
       branch: branch === '' ? null : branch,
       behind: Number.isFinite(behind) ? behind : 0,
@@ -50,6 +53,9 @@ export async function check(): Promise<SourceRepoUpdate> {
       dirty: status !== '',
       error: null,
     }
+    log(`源码仓库检查：分支 ${result.branch ?? '—'}，落后 ${result.behind}，领先 ${result.ahead}，`
+      + `工作区${result.dirty ? '有改动' : '干净'}（对比 ${ref}）`)
+    return result
   } catch (e) {
     return { ...base, exists: true, error: e instanceof Error ? e.message : String(e) }
   }

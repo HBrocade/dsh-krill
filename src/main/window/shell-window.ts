@@ -173,6 +173,14 @@ export function focusWindow(): void {
  */
 export async function captureViews(prefix: string): Promise<string[]> {
   const { writeFile } = await import('node:fs/promises')
+  // 窗口没在合成就抓不到（macOS 会报 UnknownVizError / display surface not available）。
+  // 从终端后台启动时窗口可能不在前台，先显式亮出来再抓。
+  if (win !== null && !win.isDestroyed()) {
+    win.show()
+    win.moveTop()
+    win.focus()
+    await new Promise((r) => setTimeout(r, 600))
+  }
   const out: string[] = []
   if (shellView !== null) {
     const img = await shellView.webContents.capturePage()

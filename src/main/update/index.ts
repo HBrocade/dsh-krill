@@ -82,9 +82,29 @@ export function checkAll(options: { force?: boolean; reason?: string } = {}): Pr
       app: appResult,
     })
 
+    // 出错的检测项在 pendingCount 里也算 0 —— 不单独报出来的话，
+    // 「检查失败」和「全部最新」在日志里长得一模一样，排查时会被误导。
+    const errors: string[] = []
+    if (cliResult.error !== null) errors.push(`dsh CLI: ${cliResult.error}`)
+    if (repoResult.error !== null) errors.push(`源码仓库: ${repoResult.error}`)
+    if (appResult.error !== null) errors.push(`App 自更新: ${appResult.error}`)
+    for (const p of pluginResult) {
+      if (p.error !== null && p.source === 'registry') errors.push(`插件 ${p.name}: ${p.error}`)
+    }
+
     const n = pendingCount()
-    log(`更新检查完成：${n === 0 ? '全部最新' : `${n} 项可更新`}`
-      + (cliResult.upgradable ? `（dsh ${cliResult.current} → ${cliResult.latest}）` : ''))
+    const detail = [
+      cliResult.upgradable ? `dsh ${cliResult.current} → ${cliResult.latest}` : null,
+      repoResult.exists && repoResult.behind > 0 ? `源码仓库落后 ${repoResult.behind}` : null,
+      pluginResult.filter((p) => p.upgradable).length > 0
+        ? `${pluginResult.filter((p) => p.upgradable).length} 个插件可升级` : null,
+    ].filter((x): x is string => x !== null)
+
+    log(`更新检查完成：${n === 0 ? '无可更新项' : `${n} 项可更新`}`
+      + (detail.length > 0 ? `（${detail.join('；')}）` : '')
+      + (errors.length > 0 ? ` —— 另有 ${errors.length} 项检查失败` : ''),
+      errors.length > 0 ? 'stderr' : 'app')
+    for (const e of errors) log(`  检查失败 · ${e}`, 'stderr')
     return getReport()
   })().finally(() => { inFlight = null })
   return inFlight
