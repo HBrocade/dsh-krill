@@ -156,8 +156,8 @@ export interface CorePatchInfo {
   exactMatch: boolean
   /** 落在作者声明的适用范围内 */
   inRange: boolean
-  /** 已写进 patchedDependencies */
-  declared: boolean
+  /** 补丁当前是否已应用在运行时上（靠回读探针判断，不靠记账） */
+  applied: boolean
   reason: string | null
 }
 

@@ -22,6 +22,8 @@ const SMOKE = process.argv.includes('--smoke-test')
 const CAPTURE = process.argv.find((a) => a.startsWith('--capture='))?.slice('--capture='.length) ?? null
 /** --dev-bridge：本次运行强制启用桥接接口（开发期验证用，不改配置文件） */
 const DEV_BRIDGE = process.argv.includes('--dev-bridge')
+/** --dev-install=<路径>：跑一次真实安装流程后退出（开发期验证用） */
+const DEV_INSTALL = process.argv.find((a) => a.startsWith('--dev-install='))?.slice('--dev-install='.length) ?? null
 /** --dev-uninstall=<包名>：跑一次真实卸载流程后退出（开发期验证四处清理用） */
 const DEV_UNINSTALL = process.argv.find((a) => a.startsWith('--dev-uninstall='))?.slice('--dev-uninstall='.length) ?? null
 /** --panel=<id>：抓图前先切到指定面板，用来验证某个面板的渲染 */
@@ -179,6 +181,19 @@ async function main(): Promise<void> {
     if (SMOKE) {
       log('SMOKE_TEST_PASS：后端就绪且窗口已装配')
       setTimeout(() => app.quit(), 2_000)
+    }
+    if (DEV_INSTALL !== null) {
+      setTimeout(() => {
+        void plugins.install({ spec: DEV_INSTALL, channel: 'injected' })
+          .then((o) => {
+            log(`DEV_INSTALL 结果：${o.name ?? '?'} recognized=${String(o.recognized)}`)
+            for (const st of o.steps) {
+              log(`  ${st.skipped ? '—' : st.ok ? '✓' : '✗'} ${st.label}：${st.detail ?? ''}`)
+            }
+          })
+          .catch((e: unknown) => { log(`DEV_INSTALL 失败：${String(e)}`, 'stderr') })
+          .finally(() => { setTimeout(() => app.quit(), 1_500) })
+      }, 3_000)
     }
     if (DEV_UNINSTALL !== null) {
       setTimeout(() => {

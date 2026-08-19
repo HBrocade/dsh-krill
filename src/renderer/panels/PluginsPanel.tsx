@@ -149,7 +149,7 @@ export function PluginsPanel(): React.JSX.Element {
                                 <span className="muted">
                                   宿主 {c.installedVersion ?? '未安装'} · 补丁针对 {c.authoredFor}
                                 </span>
-                                {c.declared ? <span className="tag tag-dim">已声明</span> : null}
+                                {c.applied ? <span className="tag tag-ok">已应用</span> : null}
                               </div>
                               {!c.inRange ? (
                                 <div className="muted desc">
@@ -225,9 +225,11 @@ export function PluginsPanel(): React.JSX.Element {
           <div className="muted hint">
             标「改宿主代码」的插件会修改 dsh 自身包的代码 —— 有些能力光靠挂载做不到
             （识图就是例子：它需要 <span className="mono">dsh-llm</span> 提供占位符机制）。
-            补丁按<b>包名</b>声明而不钉版本 —— dsh 小版本升级往往不动被补丁的那几行，
-            这时 mod 照常可用。宿主版本超出作者声明的适用范围时会提示风险但仍尝试应用；
-            真打不上由 pnpm 挡下安装，不会留下半成品。卸载插件时补丁一并撤销。
+            补丁打在 <b>dsh 运行时</b>上（核心包住在那儿，不在 profile 里），
+            首次会把运行时复制一份到应用数据目录再改 —— App 内的那份不动，应用更新不会冲掉补丁。
+            版本不钉死：宿主小版本升级往往不动被补丁的那几行，这时 mod 照常可用；
+            超出适用范围会提示但仍尝试，真打不上就中止安装、不留半成品。
+            卸载插件时补丁一并撤销。
           </div>
         ) : null}
         {s.entries.some((e) => e.clientBundleMissing) ? (

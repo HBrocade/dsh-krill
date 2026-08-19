@@ -12,8 +12,11 @@
  *     而不是笼统一句「安装失败」。
  */
 import { spawn } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync, statSync, lstatSync } from 'node:fs'
-import { join, basename, isAbsolute, resolve as resolvePath } from 'node:path'
+import {
+  existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync,
+  statSync, lstatSync, symlinkSync, readlinkSync,
+} from 'node:fs'
+import { join, basename, dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
 import { stringify } from 'yaml'
 import { locateDsh } from '../backend/locate.ts'
@@ -166,6 +169,43 @@ async function unpackInto(tarball: string, fallbackName: string): Promise<string
   return target
 }
 
+/**
+ * 给插件包挂一个指向 dsh 运行时 node_modules 的符号链接。
+ *
+ * 插件的产物 import 的是 `@deepseek-ai/cordis`、`@deepseek-ai/dsh-llm` 这些，
+ * 而它自己没有依赖树。注入器建的是 junction，Node 解析符号链接时用**真实路径**，
+ * 于是从插件包的原始位置往上找 —— 找不到任何 dsh 依赖。
+ *
+ * profile 的 node_modules 也救不了：那里的布局是别名铺平的
+ * （`cordis` 这个目录里装的其实是 `@deepseek-ai/cordis`），
+ * `@deepseek-ai/cordis` 这个说明符在那里根本不存在。
+ *
+ * 运行时那棵树才是正常布局，所以直接把整个 node_modules 链过来，
+ * 一个链接解决全部依赖，也不必逐个解析 peerDependencies。
+ */
+function linkRuntimeDeps(pluginDir: string): void {
+  const located = locateDsh()
+  if (located === null) return
+  const runtimeModules = resolvePath(dirname(located.bin), '..', '..', '..')
+  const target = join(pluginDir, 'node_modules')
+  try {
+    const st = lstatSync(target)
+    if (st.isSymbolicLink()) {
+      if (readlinkSync(target) === runtimeModules) return
+      rmSync(target, { force: true })
+    } else {
+      // 已有真实的 node_modules 目录就别碰 —— 那是插件自带的
+      return
+    }
+  } catch { /* 不存在，往下建 */ }
+  try {
+    symlinkSync(runtimeModules, target, 'dir')
+    log(`已为 ${pluginDir} 链接运行时依赖 → ${runtimeModules}`)
+  } catch (e) {
+    log(`链接运行时依赖失败：${e instanceof Error ? e.message : String(e)}`, 'stderr')
+  }
+}
+
 function readPackageName(dir: string): string {
   try {
     const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as { name?: unknown }
@@ -257,6 +297,7 @@ export async function install(
   const profile = args.profile ?? DEFAULT_PROFILE
   const dir = await materialize(args.spec)
   const name = readPackageName(dir)
+  linkRuntimeDeps(dir)
   log(`安装插件 ${name}（来源 ${dir}，通道 ${args.channel}）`)
 
   // 互斥检查：两条通道对同一个包并存会造出重复 loader entry id，dsh 启动即崩
@@ -284,18 +325,18 @@ export async function install(
     }
   }
 
-  // 代码级补丁要在装包**之前**写好声明 —— pnpm 在安装时应用它们，
-  // 装完再写就得再跑一次安装
-  const patches = corePatch.apply(profile, dir)
-  if (patches.length > 0) {
-    onOutput?.(`已写入 ${String(patches.length)} 处代码级补丁声明：${patches.join('、')}`)
-    // 补丁只有经过一次 pnpm 安装才会真正打上去
-    await runDshPlugin(profile, ['install'], onOutput)
-    // 装完回读：pnpm 能保证补丁被应用，保证不了它打出了预期效果
-    for (const v of corePatch.verify(profile, dir)) {
-      onOutput?.(`${v.ok ? '✓' : '✗'} 补丁校验 ${v.package}：${v.detail}`)
-      if (!v.ok) log(`补丁未产生预期效果：${v.package} —— ${v.detail}`, 'stderr')
-    }
+  // 代码级补丁打在 dsh 运行时上（不是 profile —— 核心包住在运行时里）。
+  // 首次会把运行时复制一份到 userData，之后 locate.ts 优先用那份。
+  const patched = await corePatch.apply(dir, onOutput)
+  const failed = patched.filter((r) => !r.ok)
+  if (failed.length > 0) {
+    throw new Error(
+      `${String(failed.length)} 处代码级补丁未能应用，已中止安装：\n`
+      + failed.map((r) => `  ${r.package}：${r.detail}`).join('\n'),
+    )
+  }
+  if (patched.length > 0) {
+    onOutput?.(`${String(patched.length)} 处代码级补丁已应用并校验通过，重启后端后生效`)
   }
 
   if (args.channel === 'injected') {
@@ -453,13 +494,18 @@ export async function uninstall(
   for (const d of dirs) {
     if (!existsSync(join(d, 'package.json'))) continue
     try {
-      const reverted = corePatch.revert(profile, d)
+      const reverted = await corePatch.revert(d, onOutput)
+      const bad = reverted.filter((r) => !r.ok)
       steps.push({
         label: '代码级补丁',
-        detail: reverted.length === 0 ? '该插件没有代码级补丁' : `已撤销 ${String(reverted.length)} 处，需重新安装依赖才生效`,
-        ok: true,
+        detail: reverted.length === 0
+          ? '该插件没有代码级补丁'
+          : bad.length === 0
+            ? `已撤销 ${String(reverted.length)} 处，重启后端后生效`
+            : `${String(bad.length)}/${String(reverted.length)} 处撤销失败：`
+              + bad.map((r) => `${r.package} ${r.detail}`).join('；'),
+        ok: bad.length === 0,
       })
-      if (reverted.length > 0) await runDshPlugin(profile, ['install'], onOutput)
     } catch (e) {
       steps.push({ label: '代码级补丁', detail: e instanceof Error ? e.message : String(e), ok: false })
     }
