@@ -137,6 +137,25 @@ export interface UpdateReport {
 /** 一个包当前所处的安装通道。两条通道对同一个包互斥 —— 同时存在会造重复 loader id。 */
 export type PluginChannel = 'official' | 'injected' | 'both' | 'none'
 
+/**
+ * 一处代码级补丁的状态。
+ *
+ * 有些插件光靠挂载做不到，需要改宿主自己的代码（识图就是例子）。
+ * 这类插件必须在面板上**显式标出来** —— 用户有权知道装一个插件会改动
+ * 宿主的哪些包。
+ */
+export interface CorePatchInfo {
+  package: string
+  /** 补丁针对的上游版本，必须精确匹配 */
+  version: string
+  /** 实际装的版本 */
+  installedVersion: string | null
+  versionMatches: boolean
+  /** 已写进 patchedDependencies */
+  declared: boolean
+  reason: string | null
+}
+
 export interface PluginEntry {
   name: string
   version: string | null
@@ -157,6 +176,8 @@ export interface PluginEntry {
   disabled: boolean
   /** 本地目录（桌面端自管的插件解压目录） */
   dir: string | null
+  /** 该插件携带的代码级补丁；空数组表示它只做挂载、不碰宿主代码 */
+  corePatches: CorePatchInfo[]
 }
 
 export interface PluginsState {
@@ -196,37 +217,6 @@ export interface InstallOutcome {
   steps: RecognitionStep[]
   /** 全链路通过 */
   recognized: boolean
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 多模态 / 识图
-// ─────────────────────────────────────────────────────────────────────────────
-
-export interface VisionConfig {
-  enabled: boolean
-  provider: string | null
-  model: string | null
-  maxOutputTokens: number | null
-  timeoutMs: number | null
-}
-
-export interface OllamaState {
-  reachable: boolean
-  version: string | null
-  models: string[]
-  /** 正在拉取的模型与进度 */
-  pulling: { model: string; percent: number } | null
-}
-
-export interface VisionState {
-  config: VisionConfig
-  /** 后端有没有注册 vision 配置段 —— 没有说明插件没装/没生效 */
-  namespaceRegistered: boolean
-  /** 配置读写走的哪条路：后端 API（有 revision 栅栏）还是直接读写 settings.yaml */
-  configSource: 'api' | 'file'
-  ollama: OllamaState
-  /** 后端已注册的多模态 route，供云端通道选择 */
-  cloudRoutes: Array<{ provider: string; model: string }>
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -294,10 +284,6 @@ export interface InvokeMap {
   'plugins:setDisabled': (args: { name: string; disabled: boolean }) => OpResult<string>
   'plugins:patchDoctor': (args: { fix: boolean }) => OpResult<PatchHealth>
 
-  'vision:state': () => VisionState
-  'vision:update': (patch: Partial<VisionConfig>) => OpResult<VisionState>
-  'vision:startOllama': () => OpResult
-  'vision:pullModel': (model: string) => OpResult
 
   'bridge:status': () => BridgeStatus
   'bridge:config': () => BridgeConfig
@@ -311,7 +297,6 @@ export interface EventMap {
   'log:line': LogLine
   'update:changed': UpdateReport
   'plugins:changed': PluginsState
-  'vision:changed': VisionState
   'bridge:changed': BridgeStatus
   /** 主进程要求渲染层切到某个面板（托盘菜单点击等） */
   'nav:goto': { panel: string }
@@ -326,13 +311,12 @@ export const INVOKE_CHANNELS = [
   'update:appDownload', 'update:appInstall',
   'plugins:state', 'plugins:refresh', 'plugins:install', 'plugins:uninstall',
   'plugins:setDisabled', 'plugins:patchDoctor',
-  'vision:state', 'vision:update', 'vision:startOllama', 'vision:pullModel',
   'bridge:status', 'bridge:config', 'bridge:setConfig', 'bridge:rotateToken',
 ] as const satisfies ReadonlyArray<keyof InvokeMap>
 
 export const EVENT_CHANNELS = [
   'backend:changed', 'log:line', 'update:changed',
-  'plugins:changed', 'vision:changed', 'bridge:changed', 'nav:goto',
+  'plugins:changed', 'bridge:changed', 'nav:goto',
 ] as const satisfies ReadonlyArray<keyof EventMap>
 
 /** preload 在 window.dsh 上暴露的形状。 */

@@ -54,7 +54,6 @@ export function App(): React.JSX.Element {
         {panel === 'updates' ? <UpdatesPanel /> : null}
         {panel === 'plugins' ? <PluginsPanel /> : null}
         {panel === 'bridge' ? <BridgePanel /> : null}
-        {panel === 'vision' ? <Placeholder title="多模态控制台" phase="P5" /> : null}
       </div>
     </div>
   )

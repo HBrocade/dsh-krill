@@ -21,7 +21,11 @@ import { log } from '../backend/log-ring.ts'
 import { profilesRoot, readManifest } from '../update/plugins.ts'
 import * as injector from './injector.ts'
 import * as patch from './patch.ts'
+import * as corePatch from './core-patch.ts'
 import { desktopPluginsRoot } from './inventory.ts'
+
+/** 本地别名，避免和 inventory 的导出在下面混用时看不清来源 */
+const desktopPluginsRootLocal = desktopPluginsRoot
 import type { InstallOutcome, RecognitionStep, PluginChannel } from '@shared/ipc'
 
 const DEFAULT_PROFILE = 'web'
@@ -280,6 +284,15 @@ export async function install(
     }
   }
 
+  // 代码级补丁要在装包**之前**写好声明 —— pnpm 在安装时应用它们，
+  // 装完再写就得再跑一次安装
+  const patches = corePatch.apply(profile, dir)
+  if (patches.length > 0) {
+    onOutput?.(`已写入 ${String(patches.length)} 处代码级补丁声明：${patches.join('、')}`)
+    // 补丁只有经过一次 pnpm 安装才会真正打上去
+    await runDshPlugin(profile, ['install'], onOutput)
+  }
+
   if (args.channel === 'injected') {
     const msg = await injector.inject(dir)
     onOutput?.(msg)
@@ -427,6 +440,24 @@ export async function uninstall(
     }
   } else {
     steps.push({ label: 'profile 依赖与 bundles', detail: '不在 dependencies 里，跳过', ok: true })
+  }
+
+  // 代码级补丁也要撤 —— 不撤的话宿主代码一直带着改动，
+  // 而插件已经不在了，是最难排查的一种残留
+  const dirs = [join(desktopPluginsRootLocal(), ...name.split('/'))]
+  for (const d of dirs) {
+    if (!existsSync(join(d, 'package.json'))) continue
+    try {
+      const reverted = corePatch.revert(profile, d)
+      steps.push({
+        label: '代码级补丁',
+        detail: reverted.length === 0 ? '该插件没有代码级补丁' : `已撤销 ${String(reverted.length)} 处，需重新安装依赖才生效`,
+        ok: true,
+      })
+      if (reverted.length > 0) await runDshPlugin(profile, ['install'], onOutput)
+    } catch (e) {
+      steps.push({ label: '代码级补丁', detail: e instanceof Error ? e.message : String(e), ok: false })
+    }
   }
 
   for (const [label, fn] of [

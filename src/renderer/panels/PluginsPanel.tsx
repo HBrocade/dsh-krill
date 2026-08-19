@@ -132,6 +132,35 @@ export function PluginsPanel(): React.JSX.Element {
                     {e.description !== null ? (
                       <div className="muted desc">{e.description}</div>
                     ) : null}
+                    {e.corePatches.length > 0 ? (
+                      <details className="patches">
+                        <summary className="muted">
+                          修改宿主代码 {e.corePatches.length} 处
+                          {e.corePatches.some((c) => !c.versionMatches) ? ' · 版本不匹配' : ''}
+                        </summary>
+                        {e.corePatches.map((c) => (
+                          <div className="patch-row" key={c.package}>
+                            <span className={c.versionMatches ? 'step-mark ok' : 'step-mark bad'}>
+                              {c.versionMatches ? '✓' : '✗'}
+                            </span>
+                            <div>
+                              <div className="mono">
+                                {c.package} <span className="muted">@{c.version}</span>
+                                {c.declared ? <span className="tag tag-dim">已声明</span> : null}
+                              </div>
+                              {!c.versionMatches ? (
+                                <div className="muted desc">
+                                  实际装的是 {c.installedVersion ?? '未安装'} —— 版本不匹配。
+                                  安装会被 pnpm 挡下（ERR_PNPM_UNUSED_PATCH），需要等插件作者出适配新版本的补丁。
+                                </div>
+                              ) : c.reason !== null ? (
+                                <div className="muted desc">{c.reason}</div>
+                              ) : null}
+                            </div>
+                          </div>
+                        ))}
+                      </details>
+                    ) : null}
                     <div className="chips">
                       {e.isBundle ? <span className="tag tag-dim">层叠</span> : null}
                       {e.hasClient ? (
@@ -141,6 +170,12 @@ export function PluginsPanel(): React.JSX.Element {
                       ) : null}
                       {e.disabled ? <span className="tag tag-bad">已禁用</span> : null}
                       {e.pendingRemoval ? <span className="tag tag-bad">待卸载</span> : null}
+                      {e.corePatches.length > 0 ? (
+                        <span className={`tag ${e.corePatches.every((c) => c.versionMatches) ? 'tag-warn' : 'tag-bad'}`}
+                          title="这个插件会修改宿主的代码">
+                          改宿主代码 ×{e.corePatches.length}
+                        </span>
+                      ) : null}
                     </div>
                   </td>
                   <td className="muted">{e.profile}</td>
@@ -180,6 +215,14 @@ export function PluginsPanel(): React.JSX.Element {
           <div className="err-line">
             有包同时处于两条通道。两条通道对同一个包<b>互斥</b> ——
             会造出重复 loader entry id，dsh 启动即崩。请只保留一条。
+          </div>
+        ) : null}
+        {s.entries.some((e) => e.corePatches.length > 0) ? (
+          <div className="muted hint">
+            标「改宿主代码」的插件会修改 dsh 自身包的代码 —— 有些能力光靠挂载做不到
+            （识图就是例子：它需要 <span className="mono">dsh-llm</span> 提供占位符机制）。
+            补丁的目标版本<b>精确钉死</b>，dsh 升级后版本对不上就拒绝应用而不是硬打；
+            卸载插件时补丁会一并撤销。
           </div>
         ) : null}
         {s.entries.some((e) => e.clientBundleMissing) ? (

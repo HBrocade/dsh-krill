@@ -13,6 +13,7 @@ import { join } from 'node:path'
 import { listProfiles, readManifest, profilesRoot, runtimeVersion } from '../update/plugins.ts'
 import * as injector from './injector.ts'
 import * as patch from './patch.ts'
+import * as corePatch from './core-patch.ts'
 import { log } from '../backend/log-ring.ts'
 import type { PluginEntry, PluginsState, PluginChannel } from '@shared/ipc'
 
@@ -156,6 +157,14 @@ export async function collect(): Promise<PluginsState> {
         pendingRemoval: false,
         disabled,
         dir: meta.dir,
+        corePatches: meta.dir === null ? [] : corePatch.inspect(profile, meta.dir).map((c) => ({
+          package: c.package,
+          version: c.version,
+          installedVersion: c.installedVersion,
+          versionMatches: c.versionMatches,
+          declared: c.declared,
+          reason: c.reason ?? null,
+        })),
       })
     }
   }
