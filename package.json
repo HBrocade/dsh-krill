@@ -19,7 +19,8 @@
     "icons": "node scripts/gen-icons.mjs",
     "embed": "node --experimental-strip-types scripts/embed-dsh.mjs",
     "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder"
+    "dist": "npm run build && electron-builder",
+    "pack-mod": "node scripts/pack-mod.mjs"
   },
   "dependencies": {
     "electron-updater": "^6.8.9",

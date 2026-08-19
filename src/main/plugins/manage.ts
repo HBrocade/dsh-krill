@@ -14,7 +14,7 @@
 import { spawn } from 'node:child_process'
 import {
   existsSync, mkdirSync, readFileSync, writeFileSync, rmSync, copyFileSync,
-  statSync, lstatSync, symlinkSync, readlinkSync,
+  statSync, lstatSync, symlinkSync, readlinkSync, readdirSync,
 } from 'node:fs'
 import { join, basename, dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
@@ -234,6 +234,7 @@ function step(
  */
 export async function verifyRecognition(
   name: string, dir: string, profile: string,
+  channel: 'injected' | 'official' = 'injected',
 ): Promise<RecognitionStep[]> {
   const steps: RecognitionStep[] = []
 
@@ -243,19 +244,31 @@ export async function verifyRecognition(
   steps.push(step('resolvable', `${profile} 的 node_modules 里能解析到 ${name}`,
     resolvable, resolvable ? nm : `${nm} 不存在 —— junction / 链接没建成`))
 
-  // 2. 注入器视角：条目在不在、fiber 活没活
-  try {
-    const listed = await injector.list()
-    const hit = listed.entries.find((e) => e.name === name || e.id === name)
-    const active = hit?.active === true
-    steps.push(step('injector-active', '注入器 /list 里存在且 active',
-      active,
-      hit === undefined
-        ? '注入器清单里没有这个包 —— loader.create 可能失败了'
-        : active ? null : 'fiber 未活跃，看注入器返回的错'))
-  } catch (e) {
-    steps.push(step('injector-active', '注入器 /list 里存在且 active',
-      false, `注入器不可用：${e instanceof Error ? e.message : String(e)}`, true))
+  // 2. 装配态核对 —— 两条通道要查的东西完全不同：
+  //    热注入看注入器的运行时清单；官方装配的包**本来就不该**在那份清单里
+  //    （它只跟踪运行时注入的），拿它去查会把一次成功的安装判成失败。
+  if (channel === 'official') {
+    const manifest = readManifest(profile)
+    const inBundles = manifest !== null && manifest.bundles.includes(name)
+    steps.push(step('injector-active', `${profile} 的 dsh.profile.bundles 里已登记`,
+      inBundles,
+      inBundles
+        ? '重启后端后由官方 loader 装配'
+        : 'bundles 里没有它 —— dsh plugin add 可能没能回填层叠'))
+  } else {
+    try {
+      const listed = await injector.list()
+      const hit = listed.entries.find((e) => e.name === name || e.id === name)
+      const active = hit?.active === true
+      steps.push(step('injector-active', '注入器 /list 里存在且 active',
+        active,
+        hit === undefined
+          ? '注入器清单里没有这个包 —— loader.create 可能失败了'
+          : active ? null : 'fiber 未活跃，看注入器返回的错'))
+    } catch (e) {
+      steps.push(step('injector-active', '注入器 /list 里存在且 active',
+        false, `注入器不可用：${e instanceof Error ? e.message : String(e)}`, true))
+    }
   }
 
   // 3. 官方视角复核。pluginInventory 是 typert 生成的 Remote，不在 RpcMethodMap 里，
@@ -265,21 +278,37 @@ export async function verifyRecognition(
 
   // 4. 能力级验证：有 client 半边的包，至少要能确认 client bundle 构建过；
   //    工具/UI 是否真的注册进去，需要一个会话级探针，尚未实现。
+  // client 半边可能在 meta 包自己身上，也可能在 packages/ 下的子包里
+  // （照官方结构，host 与 client 是两个包）。两处都要看。
   let capOk = true
   let capDetail: string | null = '无 client 声明，跳过 client bundle 检查；工具级探针尚未实现'
-  try {
-    const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
-      dsh?: { client?: unknown }
-    }
-    if (pkg.dsh?.client !== undefined && pkg.dsh.client !== null) {
-      capOk = existsSync(join(dir, 'lib', 'client.js'))
-      capDetail = capOk
-        ? 'client bundle 存在'
-        : '声明了 dsh.client 却没有 lib/client.js —— 装上也不会有 UI，需要在包目录里跑一次 client 构建'
-    }
-  } catch {
-    capOk = false
-    capDetail = '读不到包的 package.json'
+  const clientBearers: Array<{ name: string; dir: string }> = []
+  const collect = (d: string): void => {
+    try {
+      const pkg = JSON.parse(readFileSync(join(d, 'package.json'), 'utf8')) as {
+        name?: string; dsh?: { client?: unknown }
+      }
+      if (pkg.dsh?.client !== undefined && pkg.dsh.client !== null) {
+        clientBearers.push({ name: pkg.name ?? d, dir: d })
+      }
+    } catch { /* 不是包目录 */ }
+  }
+  collect(dir)
+  const subs = join(dir, 'packages')
+  if (existsSync(subs)) {
+    try {
+      for (const e of readdirSync(subs, { withFileTypes: true })) {
+        if (e.isDirectory()) collect(join(subs, e.name))
+      }
+    } catch { /* 读不到就算了 */ }
+  }
+  if (clientBearers.length > 0) {
+    const missing = clientBearers.filter((b) => !existsSync(join(b.dir, 'lib', 'client.js')))
+    capOk = missing.length === 0
+    capDetail = capOk
+      ? `${String(clientBearers.length)} 个 client bundle 就位：${clientBearers.map((b) => b.name).join('、')}`
+      : `${missing.map((b) => b.name).join('、')} 声明了 dsh.client 却没有 lib/client.js`
+        + ' —— 装上也不会有 UI，需要跑一次 client 构建'
   }
   steps.push(step('capability', '声明的能力确实就位', capOk, capDetail))
 
@@ -346,7 +375,7 @@ export async function install(
     await runDshPlugin(profile, ['add', dir], onOutput)
   }
 
-  const steps = await verifyRecognition(name, dir, profile)
+  const steps = await verifyRecognition(name, dir, profile, args.channel)
   const recognized = steps.every((s) => s.ok || s.skipped)
   log(`安装收尾识别闭环：${recognized ? '全部通过' : '有步骤未通过'}`)
   for (const s of steps) {

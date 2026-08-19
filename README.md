@@ -65,6 +65,7 @@ DeepSeek Harness（`dsh`）官方形态是 `dsh web` —— 起一个本地 HTTP
 npm install
 npm run embed     # 把 @deepseek-ai/dsh 装进 resources/dsh（约 312MB）
 npm run icons     # 从 build/whale.png 生成 icns / 托盘图 / 品牌标
+npm run pack-mod <mod 目录>   # 把一个 mod 打成可分发的 .tgz（带校验）
 npm run dev       # 启动
 ```
 
