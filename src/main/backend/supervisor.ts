@@ -11,7 +11,7 @@
 import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { request } from 'node:http'
-import { locateDsh, type LocatedDsh } from './locate.ts'
+import { locateDsh, webProfileFlags, type LocatedDsh } from './locate.ts'
 import { log } from './log-ring.ts'
 import type { BackendStatus, BackendPhase } from '@shared/ipc'
 
@@ -89,7 +89,7 @@ export async function start(): Promise<string> {
   located = found
   setStatus({ dshBin: found.bin, dshVersion: found.version, dshSource: found.source })
 
-  const args = [found.bin, '--profile', 'web', '--port', '0']
+  const args = [found.bin, '--profile', 'web', '--port', '0', ...webProfileFlags(found.bin)]
   log(`spawn 后端：${found.nodeBin} ${[...found.nodeFlags, ...args].join(' ')}（来源 ${found.source}）`)
   phase('starting')
 

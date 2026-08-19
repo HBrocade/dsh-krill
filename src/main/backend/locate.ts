@@ -12,7 +12,7 @@
  */
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
+import { accessSync, constants, existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { hydratePath } from './user-path.ts'
 
@@ -51,6 +51,29 @@ export interface LocatedDsh {
  */
 export function nodeFlagsFor(isElectron: boolean): readonly string[] {
   return isElectron ? ['--no-warnings', '--expose-internals'] : []
+}
+
+/**
+ * `dsh --profile web` 要额外带的参数。
+ *
+ * rc.8 起 web profile 默认**用系统浏览器打开一份 UI**（新增的 dsh-web-app/lib/startup.js
+ * 里 `openBrowser: options.open`，commander 的 --no-open 默认为 true）。我们自己就是壳，
+ * 再弹一个浏览器纯属打扰 —— 用户升级到 rc.8 后一启动 Krill 就多一个浏览器窗口。
+ *
+ * rc.7 不认这个参数，给了会 `error: unknown option '--no-open'` 直接退出。
+ * 所以按**能力探测**而不是版本号比较：直接看产物里有没有声明这个选项。
+ * 版本号比较在 DSH_BIN 指向一份读不出版本的运行时时会失灵，探测不会。
+ */
+export function webProfileFlags(bin: string): string[] {
+  // bin 形如 <root>/node_modules/@deepseek-ai/dsh/lib/bin.js
+  const libDir = join(bin, '..', '..', '..', 'dsh-web-app', 'lib')
+  try {
+    for (const f of readdirSync(libDir)) {
+      if (!f.endsWith('.js')) continue
+      if (readFileSync(join(libDir, f), 'utf8').includes('--no-open')) return ['--no-open']
+    }
+  } catch { /* 读不到就当不支持，宁可多一个浏览器窗口也别让后端起不来 */ }
+  return []
 }
 
 function isExecutable(p: string): boolean {
