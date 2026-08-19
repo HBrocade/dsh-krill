@@ -13,6 +13,7 @@ export function UpdatesPanel(): React.JSX.Element {
   const [r, setR] = useState<UpdateReport | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
   const [note, setNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
+  const [confirmed, setConfirmed] = useState(false)
 
   useEffect(() => {
     void window.dsh['update:state']().then(setR)
@@ -31,6 +32,8 @@ export function UpdatesPanel(): React.JSX.Element {
 
   if (r === null) return <div className="panel"><div className="empty">加载中…</div></div>
 
+  // 未推提交 or 脏工作区 = 高冲突风险，按钮要加一道确认
+  const risky = r.sourceRepo.ahead > 0 || r.sourceRepo.dirty
   const upgradablePlugins = r.plugins.filter((p) => p.upgradable)
   const localOnes = r.plugins.filter((p) => p.source === 'local')
   const runtimeOnes = r.plugins.filter((p) => p.source === 'runtime')
@@ -137,7 +140,7 @@ export function UpdatesPanel(): React.JSX.Element {
         ) : null}
         {runtimeOnes.length > 0 ? (
           <div className="muted hint">
-            其中 {runtimeOnes.length} 个（{runtimeOnes.map((p) => p.name).join('、')}）随 dsh 运行时自带，
+            其中 {runtimeOnes.length} 个（{[...new Set(runtimeOnes.map((p) => p.name))].join('、')}）随 dsh 运行时自带，
             不在 profile 依赖里 —— 版本跟着 dsh 走，升级 dsh 即可，无需也无法单独升级。
           </div>
         ) : null}
@@ -155,15 +158,22 @@ export function UpdatesPanel(): React.JSX.Element {
             <div className="card-title">源码仓库</div>
             <div className="muted mono">{r.sourceRepo.path}</div>
           </div>
-          {r.sourceRepo.exists && r.sourceRepo.behind > 0 ? (
+          {r.sourceRepo.exists && r.sourceRepo.behind > 0 && r.sourceRepo.error === null ? (
             <button
-              className="btn"
+              className={`btn${risky ? ' btn-danger' : ''}`}
               disabled={busy !== null}
               onClick={() => {
+                // 有未推提交或脏工作区时，rebase 冲突概率很高 —— 不该一点就走。
+                // 这不是形式主义：实测过 4 个未推提交 + 脏工作区 rebase 到 111 个
+                // 上游提交之上，直接停在冲突里。
+                if (risky && !confirmed) { setConfirmed(true); return }
+                setConfirmed(false)
                 void act('repo', () => window.dsh['update:pullSourceRepo'](), (v) => `拉取完成：${String(v)}`)
               }}
             >
-              {busy === 'repo' ? '拉取中…' : `拉取 ${r.sourceRepo.behind} 个提交`}
+              {busy === 'repo' ? '拉取中…'
+                : confirmed ? '确认拉取？再点一次'
+                  : `拉取 ${r.sourceRepo.behind} 个提交`}
             </button>
           ) : null}
         </div>
@@ -185,7 +195,16 @@ export function UpdatesPanel(): React.JSX.Element {
             ) : null}
           </>
         )}
-        {r.sourceRepo.error !== null ? <div className="err-line">{r.sourceRepo.error}</div> : null}
+        {r.sourceRepo.error !== null ? (
+          <div className="err-line">
+            {r.sourceRepo.error}
+            {r.sourceRepo.error.includes('未完成的 rebase') ? (
+              <div style={{ marginTop: 8 }}>
+                <span className="mono">cd {r.sourceRepo.path} &amp;&amp; git rebase --abort</span>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       {/* ── 桌面 App 自身 ───────────────────────────────────────── */}

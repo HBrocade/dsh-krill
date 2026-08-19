@@ -6,7 +6,8 @@
  * 一旦冲突或误操作就可能丢工作。这里把 rebase 变成面板上的显式按钮。
  */
 import { execFile } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { log } from '../backend/log-ring.ts'
 import { loadConfig } from '../config/store.ts'
@@ -36,6 +37,24 @@ export async function check(): Promise<SourceRepoUpdate> {
     await git(path, ['rev-parse', '--is-inside-work-tree'], 5_000)
   } catch {
     return { ...base, error: `${path} 存在但不是 git 仓库` }
+  }
+
+  // rebase/merge 中断时 HEAD 是游离的，落后/领先都是无意义的 0 ——
+  // 必须先识别出来，否则面板会显示成「没事」
+  const rebasing = existsSync(join(path, '.git', 'rebase-merge'))
+    || existsSync(join(path, '.git', 'rebase-apply'))
+  if (rebasing) {
+    let progress = ''
+    try {
+      const n = readFileSync(join(path, '.git', 'rebase-merge', 'msgnum'), 'utf8').trim()
+      const total = readFileSync(join(path, '.git', 'rebase-merge', 'end'), 'utf8').trim()
+      progress = `（进度 ${n}/${total}）`
+    } catch { /* rebase-apply 形式没有这两个文件 */ }
+    const msg = `仓库停在一次未完成的 rebase 中${progress}。`
+      + '落后/领先数字在游离 HEAD 上没有意义，已跳过比对。'
+      + '请在仓库里 `git rebase --abort` 回到原状，或自行解决冲突后 `git rebase --continue`。'
+    log(`源码仓库检查：${msg}`, 'stderr')
+    return { ...base, exists: true, error: msg }
   }
 
   try {
@@ -73,14 +92,24 @@ export async function pull(): Promise<string> {
   const path = cfg.sourceRepoPath
   if (!existsSync(path)) throw new Error(`仓库不存在：${path}`)
 
+  if (existsSync(join(path, '.git', 'rebase-merge')) || existsSync(join(path, '.git', 'rebase-apply'))) {
+    throw new Error('仓库里已有一次未完成的 rebase，先处理掉再拉取（`git rebase --abort` 或 `--continue`）')
+  }
+
   const before = await git(path, ['rev-parse', '--short', 'HEAD'], 5_000)
-  log(`拉取源码仓库 ${path}（rebase 到 ${cfg.sourceRepoRef}）`)
+  log(`拉取源码仓库 ${path}（rebase 到 ${cfg.sourceRepoRef}，--no-fork-point）`)
   try {
-    await git(path, ['pull', '--rebase', '--autostash'], 180_000)
+    await git(path, ['fetch', '--quiet'], 180_000)
+    // **必须带 --no-fork-point**。fork-point 启发式靠上游 ref 的 reflog 推算分叉点，
+    // 实测它会把本地未推上游的提交误判成「已在上游」而从重放列表里剔除 ——
+    // 一旦被剔除的那个提交创建了某个目录，后续每个改动该目录的提交都会报
+    // 「上游删了、你改了」的树级冲突，看起来像一堆冲突，其实是同一个误判的连锁反应。
+    await git(path, ['rebase', '--autostash', '--no-fork-point', cfg.sourceRepoRef], 180_000)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     // 保留现场，让用户能自己看清冲突
-    throw new Error(`rebase 失败，已保留仓库当前状态供你处理：\n${msg}`)
+    throw new Error(`rebase 失败，已保留仓库当前状态供你处理：\n${msg}\n\n`
+      + '回到原状：在仓库里跑 `git rebase --abort`')
   }
   const after = await git(path, ['rev-parse', '--short', 'HEAD'], 5_000)
   const summary = before === after
