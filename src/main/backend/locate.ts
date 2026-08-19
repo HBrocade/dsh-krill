@@ -14,6 +14,7 @@ import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
 import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { hydratePath } from './user-path.ts'
 
 export type DshSource = 'env' | 'userdata' | 'embedded' | 'path'
 
@@ -56,10 +57,23 @@ function isExecutable(p: string): boolean {
   try { accessSync(p, constants.X_OK); return true } catch { return false }
 }
 
-function which(cmd: string): string | null {
+function whichOnce(cmd: string): string | null {
   const r = spawnSync('which', [cmd], { encoding: 'utf8' })
   const out = r.status === 0 ? r.stdout.trim() : ''
   return out !== '' && isExecutable(out) ? out : null
+}
+
+/**
+ * 在 PATH 里找一个命令，找不到就把登录 shell 的 PATH 补进来再找一次。
+ *
+ * 从 Finder 启动时 launchd 只给最小 PATH，用户的 node / npm 一概看不见。
+ * 见 {@link hydratePath}。
+ */
+export function which(cmd: string): string | null {
+  const first = whichOnce(cmd)
+  if (first !== null) return first
+  hydratePath()
+  return whichOnce(cmd)
 }
 
 /** 升级副本的根目录，`npm install --prefix` 装到这里。 */

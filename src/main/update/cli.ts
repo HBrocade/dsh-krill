@@ -7,7 +7,7 @@
 import { spawn } from 'node:child_process'
 import { mkdirSync } from 'node:fs'
 import { fetchVersions } from './registry.ts'
-import { embeddedVersion, userDshRoot, readDshVersion, locateDsh } from '../backend/locate.ts'
+import { embeddedVersion, userDshRoot, readDshVersion, locateDsh, which } from '../backend/locate.ts'
 import { log } from '../backend/log-ring.ts'
 import { isUpgrade } from '@shared/semver'
 import type { CliUpdate } from '@shared/ipc'
@@ -54,7 +54,17 @@ export function install(version: string, onOutput?: (line: string) => void): Pro
   log(`升级 dsh → ${version}（装入 ${target}）`)
 
   return new Promise((resolve, reject) => {
-    const proc = spawn('npm', args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
+    // 必须用解析出的绝对路径：从 Finder 启动时 launchd 只给最小 PATH，
+    // 裸 'npm' 会直接 ENOENT —— 而开发者在终端里永远复现不了
+    const npm = which('npm')
+    if (npm === null) {
+      reject(new Error(
+        '找不到 npm。升级 dsh 运行时需要它 —— 请确认已装 Node.js，'
+        + '且 npm 在登录 shell 的 PATH 里（App 会从登录 shell 读一次 PATH）。',
+      ))
+      return
+    }
+    const proc = spawn(npm, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true })
     const tail: string[] = []
     const remember = (chunk: Buffer): void => {
       const text = chunk.toString()
