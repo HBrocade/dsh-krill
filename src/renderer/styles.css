@@ -157,6 +157,15 @@ body {
 .hint { margin-top: 9px; line-height: 1.65; }
 /* npm / git 的实时输出行：等宽，单行截断，不让长路径把卡片撑破 */
 /* 会造成损失但不是错误的提示：升级覆盖补丁之类 */
+/* 运行环境检测 */
+.env-row { display: flex; align-items: center; gap: 9px; margin-bottom: 6px; font-size: 13px; }
+.env-ok  { color: #4ADE80; flex: none; width: 14px; }
+.env-bad { color: #F87171; flex: none; width: 14px; }
+.env-name { flex: none; width: 62px; }
+.env-ver { flex: none; width: 132px; opacity: .8; }
+.env-purpose { flex: 1; min-width: 0; font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.warn-inline { color: #E7B549; }
 /* 更新面板里的 npm 网络设置 */
 .npm-net { margin-top: 12px; padding: 11px 13px; border: 1px solid var(--line); border-radius: 9px; }
 .npm-net-title { font-size: 13px; margin-bottom: 9px; }

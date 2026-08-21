@@ -93,6 +93,12 @@ function whichOnce(cmd: string): string | null {
  * 见 {@link hydratePath}。
  */
 export function which(cmd: string): string | null {
+  // Krill 代装的那份排在最前 —— 它是我们装的、版本可控，而且用户机器上
+  // 可能压根没有系统 node
+  if (cmd === 'node' || cmd === 'npm') {
+    const own = join(app.getPath('userData'), 'toolchain', 'node', 'bin', cmd)
+    if (existsSync(own) && isExecutable(own)) return own
+  }
   const first = whichOnce(cmd)
   if (first !== null) return first
   hydratePath()

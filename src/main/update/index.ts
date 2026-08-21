@@ -178,20 +178,21 @@ function appliedCorePatches(): Array<{ plugin: string; package: string }> {
 }
 
 /**
- * 升级后把每个 mod 的代码级补丁重打一遍，贴不上的就地停用。
+ * 升级后把每个 mod 的补丁重打一遍，贴不上的就地停用。
  *
- * 为什么必须停用而不是放着：mod 的插件代码 import 的正是补丁加进去的导出
- * （`IMAGE_PLACEHOLDER` 之类）。补丁没了而 loader 行还在，后端不是「功能降级」
- * 而是**启动即崩**，整个 App 不可用。停掉 loader 行至少让人能开起来，
- * 再决定是等 mod 更新还是卸载。
+ * dsh 的版本以官方为准，升级优先；插件跟不上就先靠边站。停用而不是卸载 ——
+ * 插件里可能有用户自己的配置，停用可逆、卸载不可逆，删不删是用户的决定。
  *
- * 停用走 mod 自己 patch 里声明的 entry id —— 不是包名，见 bundleEntryIds。
+ * 但**必须停用**，不能放着不管：补丁没了而 loader 行还在的话，插件 import 的
+ * 正是补丁加进去的导出，后端不是「功能降级」而是启动即崩，整个 App 不可用。
+ *
+ * 停用前先 revert：半应用状态比没应用更难查。
  */
 async function reconcileMods(
   mods: Array<{ dir: string; name: string }>,
   onOutput: (line: string) => void,
 ): Promise<string[]> {
-  const disabled: string[] = []
+  const removed: string[] = []
   for (const m of mods) {
     let outcomes: corePatch.PatchOutcome[]
     try {
@@ -204,20 +205,22 @@ async function reconcileMods(
       if (outcomes.length > 0) log(`${m.name}：${String(outcomes.length)} 处补丁已在新版本上重新应用`)
       continue
     }
-    // 半应用状态比没应用更难查 —— 先撤干净再停用
+    // 半应用状态比没应用更难查 —— 先撤干净再卸
     try { await corePatch.revert(m.dir, onOutput) } catch { /* 尽力而为 */ }
     try {
+      // 只停用，不替用户做卸载的决定 —— 插件里可能有他自己的配置与数据，
+      // 停用是可逆的，卸载不是。面板会把「不兼容」说清楚，删不删由他定。
       manage.setDisabled({ name: m.name, disabled: true })
-      disabled.push(m.name)
-      log(`${m.name} 与新版本冲突，已停用：`
+      removed.push(m.name)
+      log(`${m.name} 与新版本不兼容，已停用：`
         + bad.map((b) => `${b.package} ${b.detail}`).join('；'), 'stderr')
-      onOutput(`⚠ ${m.name} 的补丁贴不上新版本，已停用（${String(bad.length)} 处失败）`)
+      onOutput(`⚠ ${m.name} 与新版本不兼容，已停用（${String(bad.length)} 处补丁贴不上）`)
     } catch (e) {
-      log(`${m.name} 冲突且停用失败：${e instanceof Error ? e.message : String(e)}`, 'stderr')
-      onOutput(`✗ ${m.name} 冲突，且自动停用失败 —— 后端可能起不来，需要手动处理`)
+      log(`${m.name} 不兼容且停用失败：${e instanceof Error ? e.message : String(e)}`, 'stderr')
+      onOutput(`✗ ${m.name} 不兼容，且自动停用失败 —— 后端可能起不来，需要手动处理`)
     }
   }
-  return disabled
+  return removed
 }
 
 /**
@@ -239,9 +242,12 @@ export function upgradeCli(args: { confirm: boolean } = { confirm: false }): Pro
   const mods = modsWithCorePatches()
   const atRisk = appliedCorePatches()
   if (atRisk.length > 0 && !args.confirm) {
+    const names = [...new Set(atRisk.map((a) => a.plugin))].join('、')
     return Promise.reject(new Error(
-      `需要确认：运行时上有 ${String(atRisk.length)} 处代码级补丁在生效，升级会连同整棵树覆盖掉。`
-      + '升级后会自动重打一遍，贴不上的 mod 将被停用（否则后端起不来）。再点一次确认。',
+      `需要确认：升级可能会丢失插件。${names} 依赖 ${String(atRisk.length)} 处代码级补丁，`
+      + '而升级会覆盖整棵运行时。升级后会自动重打一遍 —— 贴得上就继续用，'
+      + '**贴不上的会被停用**（留着后端起不来）。停用后可以在插件面板里自行卸载，'
+      + '或等它更新后重装。再点一次确认升级。',
     ))
   }
 
@@ -263,7 +269,7 @@ export function upgradeCli(args: { confirm: boolean } = { confirm: false }): Pro
       })
       return off.length === 0
         ? got
-        : `${got}（${off.join('、')} 的补丁贴不上新版本，已停用 —— 可等 mod 更新后重装，或直接卸载）`
+        : `${got}（${off.join('、')} 与新版本不兼容，已停用 —— 可在插件面板卸载，或等它更新后重装）`
     })
     .catch((e: unknown) => {
       patch({ cli: { ...report.cli, upgrading: false, upgradeStep: null } })

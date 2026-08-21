@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import type { NpmConfig, UpdateReport, OpResult } from '@shared/ipc'
+import type { EnvReport, NpmConfig, UpdateReport, OpResult } from '@shared/ipc'
 
 function ago(ts: number | null): string {
   if (ts === null) return '尚未检查'
@@ -15,12 +15,14 @@ export function UpdatesPanel(): React.JSX.Element {
   const [note, setNote] = useState<{ kind: 'ok' | 'err'; text: string } | null>(null)
   const [confirmed, setConfirmed] = useState(false)
   const [cliConfirm, setCliConfirm] = useState(false)
+  const [env, setEnv] = useState<EnvReport | null>(null)
   const [npm, setNpm] = useState<NpmConfig | null>(null)
   const [npmDraft, setNpmDraft] = useState<NpmConfig | null>(null)
 
   useEffect(() => {
     void window.dsh['update:state']().then(setR)
     void window.dsh['update:npmConfig']().then((c) => { setNpm(c); setNpmDraft(c) })
+    void window.dsh['env:check']().then(setEnv)
     return window.dsh.on('update:changed', setR)
   }, [])
 
@@ -105,6 +107,39 @@ export function UpdatesPanel(): React.JSX.Element {
             {[...new Set(r.cli.atRiskPatches.map((p) => p.plugin))].join('、')}。
             升级后会自动重打一遍；<b>贴不上的 mod 会被停用</b> —— 否则它 import
             的正是补丁加进去的导出，后端会直接起不来。停用后可以等 mod 更新后重装，或直接卸载。
+          </div>
+        ) : null}
+        {env !== null ? (
+          <div className="npm-net">
+            <div className="npm-net-title">
+              运行环境
+              {env.blocking.length === 0
+                ? <span className="muted"> —— 都就绪</span>
+                : <span className="warn-inline"> —— 缺 {env.blocking.join('、')}，升级会失败</span>}
+            </div>
+            {env.tools.map((t) => (
+              <div key={t.id} className="env-row">
+                <span className={t.ok ? 'env-ok' : 'env-bad'}>{t.ok ? '✓' : '✗'}</span>
+                <span className="env-name">{t.label}</span>
+                <span className="env-ver mono-line">{t.version ?? '未找到'}</span>
+                <span className="muted env-purpose">{t.purpose}</span>
+                {t.fixable && !t.ok ? (
+                  <button
+                    className="btn"
+                    disabled={busy !== null}
+                    onClick={() => {
+                      void act('env', () => window.dsh['env:installNode'](),
+                        (v) => `已安装到 ${String(v)}`)
+                        .then(() => window.dsh['env:check']())
+                        .then(setEnv)
+                    }}
+                  >{busy === 'env' ? '安装中…' : '代为安装'}</button>
+                ) : null}
+              </div>
+            ))}
+            {env.tools.filter((t) => !t.ok && t.hint !== null).map((t) => (
+              <div key={`${t.id}-hint`} className="muted hint">{t.label}：{t.hint}</div>
+            ))}
           </div>
         ) : null}
         {npmDraft !== null ? (

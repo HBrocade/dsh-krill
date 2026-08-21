@@ -126,7 +126,9 @@ if (failed > 0) {
 if (target !== null) {
   for (const d of packManifest.krill.corePatches) {
     d.authoredFor = target
-    d.appliesTo = `^${target}`
+    // 不写 appliesTo：插件不锁 dsh 版本。范围声明只会让「本来贴得上」的升级
+    // 被提前拒绝，而贴不贴得上只有 patch 自己知道。
+    delete d.appliesTo
   }
   writeFileSync(packManifestPath, `${JSON.stringify(packManifest, null, 2)}\n`, 'utf8')
   console.log(`\n=== 版本声明已更新为 ${target} ===`)

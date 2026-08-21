@@ -151,6 +151,29 @@ export interface NpmConfig {
   proxy: string
 }
 
+/** 一项外部命令的检测结果。 */
+export interface EnvTool {
+  id: 'node' | 'npm' | 'git' | 'patch'
+  label: string
+  /** 这项用来干什么 —— 缺了到底影响什么，得说清楚 */
+  purpose: string
+  path: string | null
+  version: string | null
+  ok: boolean
+  /** Krill 能不能代装 */
+  fixable: boolean
+  /** 缺失时怎么办；正常时可能有补充说明 */
+  hint: string | null
+}
+
+export interface EnvReport {
+  platform: string
+  arch: string
+  tools: EnvTool[]
+  /** 真正挡路的那些（缺了会让功能直接失败，而不是少一项） */
+  blocking: string[]
+}
+
 export interface UpdateReport {
   checkedAt: number | null
   checking: boolean
@@ -335,6 +358,9 @@ export interface InvokeMap {
   'update:state': () => UpdateReport
   'update:check': () => OpResult<UpdateReport>
   'update:upgradeCli': (args: { confirm: boolean }) => OpResult<string>
+  'env:check': () => EnvReport
+  'env:installNode': () => OpResult<string>
+  'env:removeNode': () => OpResult
   'update:npmConfig': () => NpmConfig
   'update:setNpmConfig': (patch: Partial<NpmConfig>) => OpResult<NpmConfig>
   'update:pullSourceRepo': () => OpResult<string>
@@ -373,6 +399,7 @@ export const INVOKE_CHANNELS = [
   'log:tail',
   'update:state', 'update:check', 'update:upgradeCli', 'update:pullSourceRepo',
   'update:npmConfig', 'update:setNpmConfig',
+  'env:check', 'env:installNode', 'env:removeNode',
   'update:appDownload', 'update:appInstall',
   'plugins:state', 'plugins:refresh', 'plugins:install', 'plugins:uninstall',
   'plugins:setDisabled', 'plugins:patchDoctor',
