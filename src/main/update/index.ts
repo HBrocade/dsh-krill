@@ -14,6 +14,7 @@ import { loadConfig } from '../config/store.ts'
 import { desktopPluginsRoot } from '../plugins/inventory.ts'
 import * as corePatch from '../plugins/core-patch.ts'
 import * as manage from '../plugins/manage.ts'
+import * as supervisor from '../backend/supervisor.ts'
 import { readdirSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { UpdateReport } from '@shared/ipc'
@@ -202,7 +203,18 @@ async function reconcileMods(
     }
     const bad = outcomes.filter((o) => !o.ok)
     if (bad.length === 0) {
-      if (outcomes.length > 0) log(`${m.name}：${String(outcomes.length)} 处补丁已在新版本上重新应用`)
+      if (outcomes.length > 0) {
+        log(`${m.name}：${String(outcomes.length)} 处补丁已在新版本上重新应用`)
+        // 之前因为不兼容被停用的，现在补丁贴上了就该自己回来 —— 否则用户得记住
+        // 「我半年前停用过什么」，再手动去启用，而那时早忘了为什么停的
+        try {
+          const back = manage.setDisabled({ name: m.name, disabled: false })
+          if (!back.startsWith('本来就没有')) {
+            log(`${m.name} 重新启用：${back}`)
+            onOutput(`✓ ${m.name} 与新版本兼容，已重新启用`)
+          }
+        } catch { /* 启用失败不该让整次升级失败 */ }
+      }
       continue
     }
     // 半应用状态比没应用更难查 —— 先撤干净再卸
@@ -267,6 +279,23 @@ export function upgradeCli(args: { confirm: boolean } = { confirm: false }): Pro
           atRiskPatches: appliedCorePatches(),
         },
       })
+
+      // 必须自己重启，不能只提示「重启后生效」。
+      //
+      // 换树是把目录整个 rename 掉的，而老进程还活着 —— 它的代码是旧版的，
+      // 脚下的静态资源却已经是新版的。实测这个组合的表现是前端白屏加一句
+      // `web boot: window.__ModuleLoader__ bootstrap facade is missing`：
+      // 旧 host 不会给新前端注入引导。用户看到的是「升级完就坏了」，
+      // 而日志里那句提示远在几十行之前，没人会把两件事联系起来。
+      step('正在重启后端…')
+      try {
+        await supervisor.restart()
+        step('✓ 后端已重启，新版本生效')
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        log(`升级后重启后端失败：${msg}`, 'stderr')
+        step(`⚠ 升级完成，但后端重启失败：${msg} —— 请手动重启`)
+      }
       return off.length === 0
         ? got
         : `${got}（${off.join('、')} 与新版本不兼容，已停用 —— 可在插件面板卸载，或等它更新后重装）`

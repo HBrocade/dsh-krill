@@ -89,7 +89,7 @@ export function UpdatesPanel(): React.JSX.Element {
                 if (r.cli.atRiskPatches.length > 0 && !cliConfirm) { setCliConfirm(true); return }
                 setCliConfirm(false)
                 void act('cli', () => window.dsh['update:upgradeCli']({ confirm: true }),
-                  (v) => `已升级到 ${String(v)}，重启后端后生效`)
+                  (v) => `已升级到 ${String(v)}，后端已重启`)
               }}
             >
               {r.cli.upgrading || busy === 'cli'
