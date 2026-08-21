@@ -232,9 +232,15 @@ export function install(version: string, onOutput?: (line: string) => void): Pro
     // 加大并发只会更糟。默认 15 条已经够。
     '--fetch-retry-mintimeout=2000',
     '--fetch-retry-maxtimeout=15000',
-    // 缓存里有的直接用，只对缺的走网络。失败重来时这一条能省掉大半请求 ——
-    // 上一次失败的尝试已经把元数据抓进缓存了。
-    '--prefer-offline',
+    // 这里**不能**加 --prefer-offline。
+    //
+    // 它的语义是「缓存里有就别回源」，而我们每次装的恰恰是刚发布的新版本 ——
+    // 正好撞在它的失效面上。实测升级 0.1.1-rc.1 时 npm 直接吃了本地那份还没有
+    // 该版本的 packument（日志：`GET 200 … 5ms (cache stale)`，5ms 是读磁盘不是走网），
+    // 报 ETARGET「No matching version found」，看起来像是版本不存在，
+    // 而 registry 上明明有。加它是为了让重试便宜些，但代价是把新版本变成不可见。
+    //
+    // 想省的其实是 tarball 的重复下载，而那个 npm 本来就按内容寻址缓存，无需额外开关。
     ...networkArgs(target),
     '--omit', 'dev', `${PKG}@${version}`,
   ]
