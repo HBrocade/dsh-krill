@@ -12,7 +12,10 @@
  *   · 并发上限，避免被打满把机器拖死
  *   · 请求体大小上限，防止内存被撑爆
  */
+import { app } from 'electron'
 import { createServer, type Server, type IncomingMessage, type ServerResponse } from 'node:http'
+import { writeFileSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
 import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { log } from '../backend/log-ring.ts'
 import { loadConfig, saveConfig } from '../config/store.ts'
@@ -24,7 +27,12 @@ import type { BridgeStatus } from '@shared/ipc'
 /** 请求体上限：diff 可能不小，但 2MB 已经远超正常 code review 的量 */
 const MAX_BODY = 2 * 1024 * 1024
 /** 单个任务超时：5 分钟。固定值 —— 不做成配置项 */
-const TIMEOUT_MS = 300_000
+/** 兜底值；正常走 config.bridge.timeoutMs，见 BridgeConfig 上的说明。 */
+const TIMEOUT_MS_FALLBACK = 900_000
+function defaultTimeoutMs(): number {
+  const v = loadConfig().bridge.timeoutMs
+  return typeof v === 'number' && v > 0 ? v : TIMEOUT_MS_FALLBACK
+}
 /** 并发上限：2。够用，又不至于让一堆任务把机器拖死 */
 const MAX_CONCURRENT = 2
 /** 端口由系统分配 —— 固定端口只会带来「被占用」这一类无谓的故障 */
@@ -59,11 +67,47 @@ function ensureToken(): string {
   return token
 }
 
+/**
+ * 让 MCP shim 能找到本次运行的端口与 token 的「发现文件」。
+ *
+ * 桥接绑的是随机端口（PORT = 0），每次启动都不一样。而面板给的接入命令
+ * 会把当时的端口和 token 焊进 `claude mcp add` 的 --env 里 —— App 一重启
+ * 那条注册就失效了，调用方表现为连不上、看起来像超时。这个坑很难自查：
+ * 注册当天是好的，第二天才开始「莫名其妙超时」。
+ *
+ * 所以改成运行时发现：启动时写下端口与 token，停止时删掉。shim 每次调用都重读，
+ * 于是重启、换端口、轮换 token 都不需要重新注册。
+ */
+export function discoveryPath(): string {
+  return join(app.getPath('userData'), 'bridge.json')
+}
+
+function writeDiscovery(port: number, token: string): void {
+  try {
+    writeFileSync(discoveryPath(), `${JSON.stringify({
+      endpoint: `http://127.0.0.1:${String(port)}`,
+      port,
+      token,
+      pid: process.pid,
+      updatedAt: Date.now(),
+    }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 })
+  } catch (e) {
+    log(`写桥接发现文件失败：${e instanceof Error ? e.message : String(e)}`, 'stderr')
+  }
+}
+
+function clearDiscovery(): void {
+  try { rmSync(discoveryPath(), { force: true }) } catch { /* 本来就没有 */ }
+}
+
 export function rotateToken(): string {
   token = randomBytes(24).toString('base64url')
   saveConfig({ bridgeToken: token })
   log('桥接 token 已轮换')
   emit()
+  // 轮换后发现文件也要跟着更新，否则 shim 还拿着旧 token
+  const addr = server?.address()
+  if (addr !== null && addr !== undefined && typeof addr === 'object') writeDiscovery(addr.port, token)
   return token
 }
 
@@ -170,7 +214,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       notes: [
         '任务失败不用 HTTP 错误码表达 —— 一律 200，看 exitCode 与 text 自己判断。',
         '并发上限 ' + String(MAX_CONCURRENT) + '，超了返回 429。',
-        '默认超时 ' + String(TIMEOUT_MS) + ' 毫秒。',
+        '默认超时 ' + String(defaultTimeoutMs()) + ' 毫秒。',
         'cwd 不限根目录，但必须是真实存在的目录。',
       ],
       runtime: { inflight: runner.inflightCount(), totalServed },
@@ -195,7 +239,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const result = await runner.run({
         prompt: String(body['prompt'] ?? ''),
         cwd: typeof body['cwd'] === 'string' ? body['cwd'] : undefined,
-        timeoutMs: typeof body['timeoutMs'] === 'number' ? body['timeoutMs'] : TIMEOUT_MS,
+        timeoutMs: typeof body['timeoutMs'] === 'number' ? body['timeoutMs'] : defaultTimeoutMs(),
       }, [])
       totalServed += 1
       emit()
@@ -228,12 +272,12 @@ export function status(): BridgeStatus {
     inflight: runner.inflightCount(),
     totalServed,
     lastError,
-    mcpCommand: port === null
-      ? '（桥接未启动）'
-      : `claude mcp add dsh --env KRILL_BRIDGE=http://127.0.0.1:${String(port)} `
-        + `--env KRILL_TOKEN=${ensureToken()} -- node <Krill.app>/Contents/Resources/bridge-mcp/index.mjs`,
+    // 命令里**不带**端口和 token：端口每次启动都变、token 可轮换，
+    // 焊进 --env 的注册第二天就失效，而失效的表现是「连不上／超时」。
+    // shim 每次调用自己读发现文件，重启换端口也不用重新注册。
+    mcpCommand: `claude mcp add dsh -- node ${join(process.resourcesPath ?? '<Krill.app>/Contents/Resources', 'bridge-mcp', 'index.mjs')}`,
     model: currentModel.describe(),
-    limits: { timeoutMs: TIMEOUT_MS, maxConcurrent: MAX_CONCURRENT },
+    limits: { timeoutMs: defaultTimeoutMs(), maxConcurrent: MAX_CONCURRENT },
   }
 }
 
@@ -266,6 +310,7 @@ export function start(): Promise<BridgeStatus> {
       const addr = s.address()
       const port = typeof addr === 'object' && addr !== null ? addr.port : PORT
       log(`桥接接口已启动：http://127.0.0.1:${String(port)}（仅回环，需 Bearer token）`)
+      writeDiscovery(port, loadConfig().bridgeToken)
       emit()
       resolve(status())
     })
@@ -277,6 +322,7 @@ export function stop(): void {
   if (server === null) return
   server.close()
   server = null
+  clearDiscovery()
   log('桥接接口已停止')
   emit()
 }

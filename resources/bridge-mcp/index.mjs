@@ -5,18 +5,58 @@
  * 让 Claude Code 之类的 MCP 客户端把 dsh 当作第二意见来源：
  * 本文件只做协议转换，真正的执行在 Krill 的桥接 HTTP 服务里。
  *
- * 接入（端口与 token 在 Krill 的「桥接」面板里，可一键复制完整命令）：
- *   claude mcp add dsh \
- *     --env KRILL_BRIDGE=http://127.0.0.1:<端口> \
- *     --env KRILL_TOKEN=<token> \
- *     -- node <本文件绝对路径>
+ * 接入（不需要填端口和 token）：
+ *   claude mcp add dsh -- node <本文件绝对路径>
+ *
+ * 端口和 token 是**每次调用时现读**的，不是注册时写死的 —— 桥接绑的是随机端口，
+ * 焊进 `--env` 的注册在 App 下次重启后就失效，而失效的表现是「连不上／超时」，
+ * 注册当天还好好的，第二天才开始出问题，极难自查。
  *
  * 刻意不引任何依赖 —— 它要能在用户机器上被裸 node 直接跑起来。
  */
 import { createInterface } from 'node:readline'
+import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 
-const BRIDGE = process.env.KRILL_BRIDGE ?? 'http://127.0.0.1:17801'
-const TOKEN = process.env.KRILL_TOKEN ?? ''
+/** Krill 写下的发现文件的默认位置，可用 KRILL_BRIDGE_FILE 覆盖。 */
+function discoveryFile() {
+  if (process.env.KRILL_BRIDGE_FILE) return process.env.KRILL_BRIDGE_FILE
+  if (process.platform === 'darwin') {
+    return join(homedir(), 'Library', 'Application Support', 'Krill', 'bridge.json')
+  }
+  if (process.platform === 'win32') {
+    return join(process.env.APPDATA ?? join(homedir(), 'AppData', 'Roaming'), 'Krill', 'bridge.json')
+  }
+  return join(process.env.XDG_CONFIG_HOME ?? join(homedir(), '.config'), 'Krill', 'bridge.json')
+}
+
+/**
+ * 解析出这次要连的地址与 token。
+ *
+ * 环境变量优先（方便开发时指到别处），否则读发现文件。**每次调用都重读** ——
+ * Krill 重启换了端口、或者轮换了 token，这里都能立刻跟上，不用重新注册。
+ */
+function resolveTarget() {
+  const envBridge = process.env.KRILL_BRIDGE
+  const envToken = process.env.KRILL_TOKEN
+  if (envBridge && envToken) return { endpoint: envBridge, token: envToken }
+
+  const f = discoveryFile()
+  let raw
+  try {
+    raw = readFileSync(f, 'utf8')
+  } catch {
+    throw new Error(
+      `找不到桥接的发现文件 ${f} —— Krill 没在运行，或者「桥接」面板里没启用。`
+      + '启用后无需重新注册 MCP，这里会自动读到新的端口与 token。',
+    )
+  }
+  let parsed
+  try { parsed = JSON.parse(raw) } catch { throw new Error(`发现文件不是合法 JSON：${f}`) }
+  if (!parsed.endpoint || !parsed.token) throw new Error(`发现文件缺 endpoint 或 token：${f}`)
+  return { endpoint: parsed.endpoint, token: parsed.token }
+}
 const PROTOCOL_VERSION = '2025-06-18'
 
 const TOOLS = [
@@ -80,10 +120,11 @@ function buildReviewPrompt({ diff, ref, focus }) {
 }
 
 async function callBridge(path, body) {
-  if (TOKEN === '') throw new Error('未设置 KRILL_TOKEN 环境变量')
-  const res = await fetch(`${BRIDGE}${path}`, {
+  // 每次调用重新解析 —— Krill 重启换了端口或轮换了 token，这里立刻跟上
+  const { endpoint, token } = resolveTarget()
+  const res = await fetch(`${endpoint}${path}`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${TOKEN}` },
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify(body),
   })
   const text = await res.text()

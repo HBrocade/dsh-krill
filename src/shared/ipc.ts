@@ -267,6 +267,14 @@ export interface InstallOutcome {
  */
 export interface BridgeConfig {
   enabled: boolean
+  /**
+   * 一次任务的超时上限（毫秒）。
+   *
+   * 默认 900 秒。原来是 300 秒 —— 实测一次真实的代码审查任务跑了 434 秒才出结果，
+   * 另一次 843 字符的任务正好卡在 300 秒被掐掉。对着一个真实仓库读文件、跑 git、
+   * 多轮工具调用，五分钟根本不够。
+   */
+  timeoutMs: number
 }
 
 export interface BridgeStatus {

@@ -99,20 +99,30 @@ export function run(req: RunRequest, allowedRoots: readonly string[]): Promise<R
       setTimeout(() => { try { proc.kill('SIGKILL') } catch { /* 已退出 */ } }, 5_000)
     }, timeoutMs)
 
+    // 一次真实任务能跑七八分钟，中间一声不吭 —— 日志里加个心跳，
+    // 否则「还在跑」和「卡死了」在事后完全分不出来
+    const beat = setInterval(() => {
+      log(`桥接任务进行中：已 ${String(Math.round((Date.now() - started) / 1000))}s`
+        + `，已收到 ${String(out.length)} 字节`)
+    }, 60_000)
+
     proc.stdout?.on('data', (d: Buffer) => { out += d.toString() })
     proc.stderr?.on('data', (d: Buffer) => {
       err += d.toString()
       if (err.length > 8_000) err = err.slice(-8_000)
     })
     proc.on('error', (e) => {
-      clearTimeout(timer); running.delete(proc)
+      clearTimeout(timer); clearInterval(beat); running.delete(proc)
       reject(new Error(`无法启动 dsh：${e.message}`))
     })
-    proc.on('exit', (code) => {
-      clearTimeout(timer); running.delete(proc)
+    proc.on('exit', (code, signal) => {
+      clearTimeout(timer); clearInterval(beat); running.delete(proc)
       const durationMs = Date.now() - started
-      log(`桥接任务结束：code=${code ?? 'null'} 用时 ${String(Math.round(durationMs / 1000))}s`
-        + (timedOut ? '（超时被掐）' : ''))
+      // 带上 signal：dsh 收到 SIGTERM 后是干净退出的（code=0），
+      // 只看 code 会把「被掐断」误读成「成功」
+      log(`桥接任务结束：code=${code ?? 'null'} signal=${signal ?? '无'} `
+        + `用时 ${String(Math.round(durationMs / 1000))}s`
+        + (timedOut ? `（超时被掐，上限 ${String(Math.round(timeoutMs / 1000))}s）` : ''))
       resolve({
         text: out.trim(),
         exitCode: code ?? -1,

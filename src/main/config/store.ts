@@ -53,8 +53,7 @@ const DEFAULTS: DesktopConfig = {
   sourceRepoRef: 'origin/master',
   bridge: {
     // 对外接口默认关闭：它能在本机执行任务，必须由用户显式打开
-    enabled: false,
-  },
+    enabled: false, timeoutMs: 900_000 },
   bridgeToken: '',
   lastPanel: 'chat',
   npmRegistry: '',
@@ -80,6 +79,10 @@ function merge(raw: unknown): DesktopConfig {
   const bridgeRaw = (r.bridge ?? {}) as Record<string, unknown>
   const bridge: DesktopConfig['bridge'] = {
     enabled: typeof bridgeRaw['enabled'] === 'boolean' ? bridgeRaw['enabled'] : DEFAULTS.bridge.enabled,
+    // 只接受正数：0 或负数会让任务立刻被掐，比用默认值更糟
+    timeoutMs: typeof bridgeRaw['timeoutMs'] === 'number' && bridgeRaw['timeoutMs'] > 0
+      ? bridgeRaw['timeoutMs']
+      : DEFAULTS.bridge.timeoutMs,
   }
   return { ...DEFAULTS, ...r, bridge }
 }
