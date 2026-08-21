@@ -28,7 +28,7 @@ DeepSeek Harness（`dsh`）官方形态是 `dsh web` —— 起一个本地 HTTP
 | **会话** | 官方 dsh React SPA，零改动嵌入 |
 | **插件** | 查询 / 安装 / 卸载 / 升级 / 启停 |
 | **更新** | dsh CLI、已装插件、桌面 App 自身、源码仓库，四类更新检测 |
-| **桥接** | 本地 HTTP + stdio MCP shim，让 Claude Code 把 dsh 当第二意见来源 |
+| **桥接** | 本地 HTTP 接口（固定端口，免鉴权），让别的工具把 dsh 当第二意见来源 |
 | **日志** | 应用日志与后端 stdout/stderr 实时合流 |
 
 ## 架构
@@ -102,7 +102,7 @@ npm run dist       # 出 dmg + zip（arm64）
 | 导航 | 外部链接一律 `shell.openExternal`，且只放行 http(s) |
 | 子进程 | 退出时 SIGTERM → 5s 宽限 → SIGKILL，防孤儿端口 |
 | 凭据 | 不内嵌任何密钥，沿用 `~/.dsh` 凭据系统 |
-| 桥接接口 | **默认关闭**；启用后仅回环、强制 Bearer token、工作目录白名单 |
+| 桥接接口 | **默认关闭**；启用后仅绑回环、拒绝一切带 `Origin` 的请求（挡住本机网页）、POST 强制 JSON。Bearer token 可选（`bridge.requireToken`），默认不要 —— 本机调用不必带票 |
 
 ## 完成度
 
@@ -111,6 +111,30 @@ npm run dist       # 出 dmg + zip（arm64）
 - [x] **P2** 更新中心：dsh CLI / 插件 / 源码仓库 / App 自身，四类检测
 - [x] **P3** 插件管理器：清单合并、patch 体检、双通道安装、卸载四处清理、识别闭环
 - [x] **P4** 桥接接口：两个端点（自描述文档 + 执行）+ stdio MCP shim
+
+### 怎么调
+
+固定在 `http://127.0.0.1:17801`，免鉴权，直接 curl：
+
+```bash
+curl -sX POST http://127.0.0.1:17801/v1/ask \
+  -H 'content-type: application/json' \
+  -d '{"prompt":"这段实现有什么隐患？","cwd":"/path/to/repo"}'
+```
+
+返回 `{ text, exitCode, durationMs, timedOut, stderrTail }`。任务失败不用 HTTP 错误码
+表达 —— 一律 200，看 `exitCode` 与 `timedOut` 自己判断。
+
+`GET /v1/docs` 是自描述文档，例子里直接写着真实地址，另一个 AI 读一遍就知道怎么调。
+
+**安全边界**：这个端点等于在本机执行任意任务（dsh 会读文件、跑 bash、改代码）。
+绑回环挡住了外网，挡不住本机的网页 —— 任何标签页都能往 `127.0.0.1` 发 POST，
+响应读不到也无所谓，副作用已经发生。所以服务端拒绝一切带 `Origin` 头的请求
+（浏览器必带、curl 必不带），并要求 POST 用 `application/json`（非简单类型，
+浏览器得先过预检，而我们不发 CORS 头）。需要更强隔离就把 `bridge.requireToken` 打开。
+
+MCP shim 仍然可用（`claude mcp add dsh -- node <Krill.app>/Contents/Resources/bridge-mcp/index.mjs`），
+端口与 token 是调用时从 `<userData>/bridge.json` 现读的，不需要写进注册。
 - [x] **P5** 改为插件承载 —— 多模态控制台不做成原生面板，由插件自己提供
 - [x] **P6** 打包分发：dmg + zip（arm64），实测装入 /Applications 可启动
 

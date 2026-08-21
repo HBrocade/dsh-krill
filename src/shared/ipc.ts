@@ -268,6 +268,25 @@ export interface InstallOutcome {
 export interface BridgeConfig {
   enabled: boolean
   /**
+   * 监听端口。`0` = 随机。
+   *
+   * 默认给一个固定端口，因为主要用法是直接 curl —— 端口每次都变的话，
+   * 每次调用前都得先去查一遍，HTTP 这条路就没有「直接调」的意义了。
+   */
+  port: number
+  /**
+   * 是否强制 Bearer token。
+   *
+   * 默认关。服务只绑回环，本机调用不必带票。
+   *
+   * 关掉它并非没有代价：这个端点等于在本机执行任意任务（dsh 会读文件、跑 bash、
+   * 改代码）。真正的风险不是外网 —— 绑回环已经挡住了 —— 而是**本机的浏览器页面**，
+   * 网页可以往 127.0.0.1 发 POST。所以即使不要 token，服务端仍然强制
+   * `Content-Type: application/json`（触发 CORS 预检，浏览器发不出来）并拒绝
+   * 任何带 `Origin` 头的请求（curl 和 CLI 都不带）。需要更强的隔离就把这项打开。
+   */
+  requireToken: boolean
+  /**
    * 一次任务的超时上限（毫秒）。
    *
    * 默认 900 秒。原来是 300 秒 —— 实测一次真实的代码审查任务跑了 434 秒才出结果，

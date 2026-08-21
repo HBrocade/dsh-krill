@@ -36,7 +36,6 @@ function defaultTimeoutMs(): number {
 /** 并发上限：2。够用，又不至于让一堆任务把机器拖死 */
 const MAX_CONCURRENT = 2
 /** 端口由系统分配 —— 固定端口只会带来「被占用」这一类无谓的故障 */
-const PORT = 0
 
 let server: Server | null = null
 let token = ''
@@ -70,7 +69,7 @@ function ensureToken(): string {
 /**
  * 让 MCP shim 能找到本次运行的端口与 token 的「发现文件」。
  *
- * 桥接绑的是随机端口（PORT = 0），每次启动都不一样。而面板给的接入命令
+ * 桥接端口可配（默认固定 17801，设 0 则随机）。改成固定之前，面板给的接入命令
  * 会把当时的端口和 token 焊进 `claude mcp add` 的 --env 里 —— App 一重启
  * 那条注册就失效了，调用方表现为连不上、看起来像超时。这个坑很难自查：
  * 注册当天是好的，第二天才开始「莫名其妙超时」。
@@ -162,7 +161,26 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
   const path = url.pathname
 
-  if (!tokenOk(req.headers.authorization)) {
+  // 浏览器防线（不管要不要 token 都查）。
+  //
+  // 这个端点等于在本机执行任意任务。绑回环挡住了外网，挡不住**本机的网页** ——
+  // 任何一个标签页都能往 127.0.0.1 发 POST，响应读不到不要紧，副作用已经发生了。
+  // 两道零成本的检查就能彻底堵死这条路：
+  //   · 带 Origin 的一律拒绝 —— 浏览器必带，curl / CLI 必不带
+  //   · POST 强制 application/json —— 非简单类型，浏览器得先过预检，而我们不发 CORS 头
+  if (typeof req.headers.origin === 'string' && req.headers.origin !== '') {
+    send(res, 403, { error: '拒绝来自浏览器的请求（带 Origin 头）。这个接口只给本机命令行与程序调用。' })
+    return
+  }
+  if (req.method === 'POST') {
+    const ct = String(req.headers['content-type'] ?? '')
+    if (!ct.toLowerCase().includes('application/json')) {
+      send(res, 415, { error: "POST 必须带 Content-Type: application/json" })
+      return
+    }
+  }
+  // token 默认不要 —— 本机调用不必带票，见 BridgeConfig.requireToken 上的说明
+  if (cfg.requireToken && !tokenOk(req.headers.authorization)) {
     send(res, 401, { error: '缺少或错误的 Bearer token' })
     return
   }
@@ -172,6 +190,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   // 不用去翻 README。
   if ((path === '/v1/docs' || path === '/' || path === '/v1') && req.method === 'GET') {
     const m = currentModel.read()
+    // 例子里写真实地址 —— 调用方（多半是另一个 AI）复制就能跑，不用再去别处查端口
+    const addr = server?.address()
+    const base = `http://127.0.0.1:${String(
+      addr !== null && addr !== undefined && typeof addr === 'object' ? addr.port : cfg.port,
+    )}`
     send(res, 200, {
       name: 'Krill bridge',
       purpose: '把 DeepSeek Harness（dsh）当作第二意见来源：换一个模型、换一个角度看同一件事。',
@@ -179,7 +202,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       // 模型与凭据都取自 ~/.dsh 全局配置 —— 和用户此刻聊天用的完全一致，
       // 调用方不需要、也不能指定
       model: { provider: m.provider, name: m.model, reasoningEffort: m.reasoningEffort },
-      auth: '所有请求都要带 Authorization: Bearer <token>',
+      auth: cfg.requireToken
+        ? '需要 Authorization: Bearer <token>（在 Krill 的桥接面板里查看）'
+        : '不需要鉴权：只绑回环，且带 Origin 头的请求（即来自浏览器的）一律拒绝。',
       endpoints: {
         'GET /v1/docs': '本文档',
         'POST /v1/ask': {
@@ -199,14 +224,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       examples: [
         {
           用途: '问一个独立问题',
-          curl: `curl -X POST $BRIDGE/v1/ask -H "Authorization: Bearer $TOKEN" `
-            + `-H 'content-type: application/json' -d '{"prompt":"这段实现有什么隐患？"}'`,
+          curl: `curl -sX POST ${base}/v1/ask -H 'content-type: application/json' `
+            + `-d '{"prompt":"这段实现有什么隐患？"}'`,
         },
         {
           用途: '代码审查第二意见',
           说明: '把 cwd 指到仓库，让它自己去跑 git diff 拿改动',
-          curl: `curl -X POST $BRIDGE/v1/ask -H "Authorization: Bearer $TOKEN" `
-            + `-H 'content-type: application/json' `
+          curl: `curl -sX POST ${base}/v1/ask -H 'content-type: application/json' `
             + `-d '{"cwd":"/path/to/repo","prompt":"运行 git diff HEAD 拿到改动，`
             + `作为独立审查者给出第二意见：只报有把握的问题，给出位置与可复现场景，不要复述改动做了什么。"}'`,
         },
@@ -304,12 +328,13 @@ export function start(): Promise<BridgeStatus> {
       reject(new Error(`桥接服务启动失败：${e.message}`))
     })
     // 只绑回环 —— 绝不监听 0.0.0.0
-    s.listen(PORT, '127.0.0.1', () => {
+    s.listen(loadConfig().bridge.port, '127.0.0.1', () => {
       server = s
       lastError = null
       const addr = s.address()
-      const port = typeof addr === 'object' && addr !== null ? addr.port : PORT
-      log(`桥接接口已启动：http://127.0.0.1:${String(port)}（仅回环，需 Bearer token）`)
+      const port = typeof addr === 'object' && addr !== null ? addr.port : 0
+      log(`桥接接口已启动：http://127.0.0.1:${String(port)}（仅回环，`
+        + `${loadConfig().bridge.requireToken ? '需 Bearer token' : '免鉴权，拒绝浏览器来源'}）`)
       writeDiscovery(port, loadConfig().bridgeToken)
       emit()
       resolve(status())

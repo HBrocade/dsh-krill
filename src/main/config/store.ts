@@ -53,7 +53,13 @@ const DEFAULTS: DesktopConfig = {
   sourceRepoRef: 'origin/master',
   bridge: {
     // 对外接口默认关闭：它能在本机执行任务，必须由用户显式打开
-    enabled: false, timeoutMs: 900_000 },
+    enabled: false,
+    // 固定端口，直接 curl 才有意义 —— 随机端口每次调用前都得先去查
+    port: 17801,
+    // 只绑回环，本机调用不带票；浏览器那条路由 content-type 与 Origin 两道检查挡住
+    requireToken: false,
+    timeoutMs: 900_000,
+  },
   bridgeToken: '',
   lastPanel: 'chat',
   npmRegistry: '',
@@ -83,6 +89,13 @@ function merge(raw: unknown): DesktopConfig {
     timeoutMs: typeof bridgeRaw['timeoutMs'] === 'number' && bridgeRaw['timeoutMs'] > 0
       ? bridgeRaw['timeoutMs']
       : DEFAULTS.bridge.timeoutMs,
+    // 0 是合法值（随机端口），所以这里只排除非数字与越界
+    port: typeof bridgeRaw['port'] === 'number' && bridgeRaw['port'] >= 0 && bridgeRaw['port'] <= 65535
+      ? bridgeRaw['port']
+      : DEFAULTS.bridge.port,
+    requireToken: typeof bridgeRaw['requireToken'] === 'boolean'
+      ? bridgeRaw['requireToken']
+      : DEFAULTS.bridge.requireToken,
   }
   return { ...DEFAULTS, ...r, bridge }
 }
