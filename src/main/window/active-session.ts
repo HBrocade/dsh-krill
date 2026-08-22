@@ -46,6 +46,20 @@ function findSessionId(root: unknown): string | null {
 const MAX_BODY_SCAN = 64 * 1024
 
 /**
+ * 只认这几个方法带来的会话 id。
+ *
+ * 不能见 sessionId 就认 —— 实测一次启动里 `session.models` 就发了 13 次，
+ * 它是给会话列表做预取的，带的是**别的**会话的 id，会把指针挪到用户没在看的
+ * 对话上（表现就是新建会话时右栏显示上一个对话的数字）。
+ *
+ * 这三个才真正意味着「用户此刻在这个会话上」：
+ *   session.history     打开某个对话，加载它的历史
+ *   session.selectModel 在当前对话上换模型 / 换思考级别
+ *   session.prompt      在当前对话上发消息
+ */
+const TRUSTED_METHODS = new Set(['session.history', 'session.selectModel', 'session.prompt'])
+
+/**
  * 在给定的 session 上装观察器。
  *
  * @param ses - SPA 所在 WebContentsView 的 session
@@ -63,10 +77,19 @@ export function watch(ses: Session, originOf: () => string | null): void {
       if (parts === undefined || parts.length === 0) return
       for (const part of parts) {
         if (part.bytes === undefined || part.bytes.length > MAX_BODY_SCAN) continue
-        const found = findSessionId(JSON.parse(part.bytes.toString('utf8')) as unknown)
+        const body = JSON.parse(part.bytes.toString('utf8')) as unknown
+        const method = (body as { method?: unknown }).method
+        const trusted = typeof method === 'string' && TRUSTED_METHODS.has(method)
+        const found = trusted ? findSessionId(body) : null
+        // KRILL_DEBUG_RPC=1 时把每个 RPC 的路径与取到的 id 都打出来 ——
+        // 排查「界面上做了某个操作，但当前会话没跟着变」时唯一有用的东西
+        if (process.env['KRILL_DEBUG_RPC'] === '1') {
+          const path = details.url.slice(details.url.indexOf('/', 8))
+          log(`[rpc] ${path} 可信=${String(trusted)} → sessionId=${found ?? '(无)'}`)
+        }
         if (found === null || found === active) continue
         active = found
-        log(`当前会话切换到 ${found}`)
+        log(`当前会话切换到 ${found}（由 ${String(method)} 触发）`)
         for (const fn of listeners) {
           try { fn(found) } catch { /* 单个订阅者出错不影响其他 */ }
         }
