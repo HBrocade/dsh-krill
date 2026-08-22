@@ -18,7 +18,7 @@
  * 没有 pnpm 工程结构，而 `patch` 天然可逆（`patch -R`）。
  */
 import { spawn } from 'node:child_process'
-import { readFileSync, existsSync, mkdirSync, cpSync, rmSync } from 'node:fs'
+import { readFileSync, existsSync, mkdirSync, cpSync, rmSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { log } from '../backend/log-ring.ts'
 import { locateDsh, userDshRoot, readDshVersion } from '../backend/locate.ts'
@@ -194,6 +194,22 @@ export interface PatchOutcome {
   package: string
   ok: boolean
   detail: string
+}
+
+/**
+ * 清掉 patch 失败时留下的 `.rej` / `.orig`。
+ *
+ * `patch` 应用失败会把没贴上的 hunk 写成 `lib/index.js.rej` 放在包里。那些文件
+ * 不影响运行，但会一直留着 —— 下次排查时看到一堆 .rej，分不清是这次的还是上次的。
+ * 实测升级到 0.1.1-rc.2 后运行时里躺着 8 个（四个包各两份）。
+ */
+function sweepRejects(pkgDir: string): void {
+  let names: string[]
+  try { names = readdirSync(join(pkgDir, 'lib')) } catch { return }
+  for (const n of names) {
+    if (!n.endsWith('.rej') && !n.endsWith('.orig')) continue
+    try { rmSync(join(pkgDir, 'lib', n), { force: true }) } catch { /* 删不掉就算了 */ }
+  }
 }
 
 export async function apply(
