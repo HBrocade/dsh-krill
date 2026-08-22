@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BackendStatus } from '@shared/ipc'
 import { Sidebar, type PanelId } from './components/Sidebar.tsx'
 import { LogsPanel } from './panels/LogsPanel.tsx'
+import { UsageColumn } from './panels/UsageColumn.tsx'
 import { UpdatesPanel } from './panels/UpdatesPanel.tsx'
 import { PluginsPanel } from './panels/PluginsPanel.tsx'
 import { BridgePanel } from './panels/BridgePanel.tsx'
@@ -49,7 +50,14 @@ export function App(): React.JSX.Element {
     <div className="shell">
       <Sidebar active={panel} onSelect={setPanel} backend={backend} />
       <div className="main">
-        {panel === 'chat' ? <div className="app-slot" ref={slotRef} /> : null}
+        {panel === 'chat' ? (
+          <>
+            <div className="app-slot" ref={slotRef} />
+            {/* 右栏是 slot 的兄弟节点：ResizeObserver 盯的就是 slot，
+                加一列它自然变窄，SPA 的落位不用主进程配合 */}
+            <UsageColumn />
+          </>
+        ) : null}
         {panel === 'logs' ? <LogsPanel /> : null}
         {panel === 'updates' ? <UpdatesPanel /> : null}
         {panel === 'plugins' ? <PluginsPanel /> : null}

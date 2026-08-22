@@ -277,3 +277,43 @@ body {
 .patches > summary:hover { color: var(--text); }
 .patch-row { display: flex; gap: 9px; padding: 6px 0 6px 4px; }
 .patch-row .mono { font-size: 11.5px; }
+
+/* ── 会话页右侧用量栏 ───────────────────────────────────────────── */
+.usage-col {
+  width: 232px; flex: none; display: flex; flex-direction: column; gap: 10px;
+  padding: 12px 12px 14px; overflow-y: auto;
+  border-left: 1px solid var(--line); background: var(--bg);
+}
+.usage-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.btn-sm { padding: 3px 9px; font-size: 12px; }
+.usage-card { border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; }
+.usage-card-title {
+  font-size: 12px; opacity: .75; margin-bottom: 8px;
+  display: flex; align-items: baseline; justify-content: space-between;
+}
+.usage-empty { font-size: 12px; }
+.usage-balance {
+  font-size: 20px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor: pointer; display: flex; align-items: baseline; gap: 8px;
+}
+.usage-hint { font-size: 11px; opacity: .45; font-style: normal; font-family: inherit; }
+.usage-delta { margin-top: 5px; font-size: 12px; opacity: .8; }
+.usage-delta > i { display: block; font-size: 11px; opacity: .55; font-style: normal; }
+.usage-model + .usage-model { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
+.usage-model-name {
+  font-size: 12px; margin-bottom: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.usage-grid {
+  display: grid; grid-template-columns: auto 1fr; gap: 3px 10px;
+  font-size: 12px; align-items: baseline;
+}
+.usage-grid > span { opacity: .6; }
+.usage-grid > b {
+  font-weight: 500; text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.usage-grid > b > i { opacity: .5; font-style: normal; font-size: 11px; }
+.usage-note { font-size: 12px; }
+.usage-foot { font-size: 11px; line-height: 1.6; margin-top: auto; padding-top: 8px; }

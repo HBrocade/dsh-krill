@@ -174,6 +174,56 @@ export interface EnvReport {
   blocking: string[]
 }
 
+/** 一个模型在某个范围内的 token 用量。数字全部来自 provider 响应，精确。 */
+export interface ModelUsage {
+  model: string
+  /** 有多少次带用量的请求 */
+  calls: number
+  /** 已减掉缓存命中部分 —— DeepSeek 的 prompt_tokens 是含缓存的，dsh 做了扣减 */
+  inputTokens: number
+  outputTokens: number
+  cacheReadTokens: number
+  reasoningTokens: number
+}
+
+export interface SessionUsage {
+  id: string
+  /** 会话所属工作目录（编码过的目录名） */
+  workspace: string
+  updatedAt: number
+  firstEventAt: number | null
+  lastEventAt: number | null
+  models: ModelUsage[]
+  totals: ModelUsage
+}
+
+/**
+ * 账户余额。
+ *
+ * DeepSeek 只有这一个和钱有关的端点，**没有花费查询接口** —— 花费只能靠两次
+ * 余额相减，见 usage/balance.ts 上的说明。
+ */
+export interface BalanceInfo {
+  available: boolean
+  currency: string
+  total: number
+  granted: number
+  toppedUp: number
+  /** 查询时刻，用于算差值 */
+  at: number
+}
+
+export interface UsageReport {
+  current: SessionUsage | null
+  recent: SessionUsage[]
+  balance: BalanceInfo | null
+  /** 上一次余额与当前余额的差 —— 这段时间的真实花费，负数表示花掉了 */
+  balanceDelta: number | null
+  /** 没配 DeepSeek 凭据时为 false，界面据此说明为什么没有余额 */
+  hasApiKey: boolean
+  error: string | null
+}
+
 export interface UpdateReport {
   checkedAt: number | null
   checking: boolean
@@ -358,6 +408,8 @@ export interface InvokeMap {
   'update:state': () => UpdateReport
   'update:check': () => OpResult<UpdateReport>
   'update:upgradeCli': (args: { confirm: boolean }) => OpResult<string>
+  'usage:state': () => UsageReport
+  'usage:refresh': () => OpResult<UsageReport>
   'env:check': () => EnvReport
   'env:installNode': () => OpResult<string>
   'env:removeNode': () => OpResult
@@ -400,6 +452,7 @@ export const INVOKE_CHANNELS = [
   'update:state', 'update:check', 'update:upgradeCli', 'update:pullSourceRepo',
   'update:npmConfig', 'update:setNpmConfig',
   'env:check', 'env:installNode', 'env:removeNode',
+  'usage:state', 'usage:refresh',
   'update:appDownload', 'update:appInstall',
   'plugins:state', 'plugins:refresh', 'plugins:install', 'plugins:uninstall',
   'plugins:setDisabled', 'plugins:patchDoctor',
