@@ -13,16 +13,37 @@ import * as project from './project.ts'
 import { fetchBalance, hasApiKey } from './balance.ts'
 import { activeSessionId, onChange as onSessionChange } from '../window/active-session.ts'
 import { watch as watchFile, type FSWatcher } from 'node:fs'
-import type { BalanceInfo, UsageReport } from '@shared/ipc'
+import type { BalanceInfo, ModelUsage, UsageReport } from '@shared/ipc'
 
 /** 上一次查到的余额，用来算差值。进程内保存即可 —— 跨重启的花费统计不是这个功能的目标。 */
 let previous: BalanceInfo | null = null
 let latest: BalanceInfo | null = null
 let lastError: string | null = null
 
+/** 只把官方路由的部分加起来 —— 余额只反映这一部分。 */
+function officialOnly(cur: UsageReport['current']): ModelUsage | null {
+  const official = cur?.models.filter((m) => m.official) ?? []
+  if (official.length === 0) return null
+  return official.reduce((t, m) => ({
+    model: 'DeepSeek 官方合计',
+    provider: project.OFFICIAL_PROVIDER,
+    official: true,
+    calls: t.calls + m.calls,
+    inputTokens: t.inputTokens + m.inputTokens,
+    outputTokens: t.outputTokens + m.outputTokens,
+    cacheReadTokens: t.cacheReadTokens + m.cacheReadTokens,
+    reasoningTokens: t.reasoningTokens + m.reasoningTokens,
+  }), {
+    model: 'DeepSeek 官方合计', provider: project.OFFICIAL_PROVIDER, official: true,
+    calls: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, reasoningTokens: 0,
+  })
+}
+
 function assemble(): UsageReport {
+  const current = project.current(activeSessionId())
+  const officialTotals = officialOnly(current)
   return {
-    current: project.current(activeSessionId()),
+    current,
     // 不在这里算 recent：它要把最近 6 个会话全解一遍，实测 659ms（其中一个 7.4MB），
     // 而这个函数在流式回答期间每 600ms 就会被调一次，全压在主进程上 ——
     // 表现就是切模型、切思考级别这类操作发卡。界面目前也不显示它。
@@ -30,6 +51,8 @@ function assemble(): UsageReport {
     balance: latest,
     balanceDelta: previous !== null && latest !== null ? latest.total - previous.total : null,
     hasApiKey: hasApiKey(),
+    usesOfficial: officialTotals !== null,
+    officialTotals,
     error: lastError,
   }
 }
@@ -43,7 +66,8 @@ export function state(): UsageReport {
     log(`用量投影失败：${msg}`, 'stderr')
     return {
       current: null, recent: [], balance: latest,
-      balanceDelta: null, hasApiKey: hasApiKey(), error: msg,
+      balanceDelta: null, hasApiKey: hasApiKey(),
+      usesOfficial: false, officialTotals: null, error: msg,
     }
   }
 }

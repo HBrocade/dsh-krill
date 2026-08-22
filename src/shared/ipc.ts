@@ -183,6 +183,14 @@ export interface ModelUsage {
    * DeepSeek 那一家。不标出来会让人把别家的 token 也算进 DeepSeek 的账。
    */
   provider: string
+  /**
+   * 是不是 DeepSeek 官方路由。
+   *
+   * 必须按 provider 判，不能看模型名 —— 实测本机会话里 `deepseek-v4-flash` 和
+   * `deepseek-v4-pro` 在 `deepseek-official` 和 `opencode-go` 两个供应商下都出现过。
+   * 只有官方那条走的是 DeepSeek 账户余额，别家的 token 与那个余额毫无关系。
+   */
+  official: boolean
   /** 有多少次带用量的请求 */
   calls: number
   /** 已减掉缓存命中部分 —— DeepSeek 的 prompt_tokens 是含缓存的，dsh 做了扣减 */
@@ -227,6 +235,15 @@ export interface UsageReport {
   balanceDelta: number | null
   /** 没配 DeepSeek 凭据时为 false，界面据此说明为什么没有余额 */
   hasApiKey: boolean
+  /**
+   * 当前会话有没有用过 DeepSeek 官方路由。
+   *
+   * 为 false 时不显示计费面板 —— 这次会话一分钱也没走 DeepSeek 账户，
+   * 摆个余额在那儿只会让人以为两者相关。
+   */
+  usesOfficial: boolean
+  /** 只统计官方路由的合计；没用过官方模型时为 null */
+  officialTotals: ModelUsage | null
   error: string | null
 }
 

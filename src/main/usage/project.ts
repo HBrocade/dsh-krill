@@ -15,6 +15,14 @@
 import { readEventsFrom, listSessions, type SessionEvent, type SessionFile } from './session-log.ts'
 import type { ModelUsage, SessionUsage } from '@shared/ipc'
 
+/**
+ * DeepSeek 官方路由的 provider id。
+ *
+ * 取自上游 `packages/llm/llm-deepseek/src/index.ts` 里的 `const PROVIDER`。
+ * 只有这条路由的消耗会扣 DeepSeek 账户余额。
+ */
+export const OFFICIAL_PROVIDER = 'deepseek-official'
+
 interface RawUsage {
   inputTokens?: number
   outputTokens?: number
@@ -46,6 +54,7 @@ function emptyModelUsage(model: string, provider = '—'): ModelUsage {
   return {
     model,
     provider,
+    official: provider === OFFICIAL_PROVIDER,
     calls: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -117,6 +126,7 @@ export function projectSession(file: SessionFile): SessionUsage {
     totals: models.reduce((t, m) => ({
       model: '合计',
       provider: '—',
+      official: false,
       calls: t.calls + m.calls,
       inputTokens: t.inputTokens + m.inputTokens,
       outputTokens: t.outputTokens + m.outputTokens,

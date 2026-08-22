@@ -24,7 +24,9 @@ function ModelRow({ m }: { m: ModelUsage }): React.JSX.Element {
     <div className="usage-model">
       <div className="usage-model-name" title={`${m.provider}/${m.model}`}>
         {m.model}
-        <i className="usage-provider">{m.provider}</i>
+        <i className={m.official ? 'usage-provider' : 'usage-provider usage-thirdparty'}>
+          {m.provider}{m.official ? '' : ' · 不计入 DeepSeek 余额'}
+        </i>
       </div>
       <div className="usage-grid">
         <span>输入</span><b>{short(m.inputTokens)}</b>
@@ -77,8 +79,14 @@ export function UsageColumn(): React.JSX.Element {
         </button>
       </div>
 
+      {/* 计费面板只在这次会话真的走过 DeepSeek 官方路由时才出现 ——
+          没走过就一分钱都不经这个账户，摆个余额只会让人误以为两者相关 */}
+      {r?.usesOfficial === true ? (
       <div className="usage-card">
-        <div className="usage-card-title">账户余额</div>
+        <div className="usage-card-title">
+          账户余额
+          <i className="usage-hint">DeepSeek 官方</i>
+        </div>
         {bal === null ? (
           <div className="muted usage-empty">
             {r?.hasApiKey === false
@@ -102,7 +110,14 @@ export function UsageColumn(): React.JSX.Element {
             {!bal.available ? <div className="err-line">账户不可用</div> : null}
           </>
         )}
+        {r.officialTotals !== null ? (
+          <div className="usage-official">
+            本次会话经官方路由：输出 {short(r.officialTotals.outputTokens)}
+            · {r.officialTotals.calls} 次
+          </div>
+        ) : null}
       </div>
+      ) : null}
 
       <div className="usage-card">
         <div className="usage-card-title">
