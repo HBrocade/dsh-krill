@@ -110,8 +110,10 @@ body {
 
 /* ── 主区 ───────────────────────────────────────────────────────────────── */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* 会话页：SPA 落位区 + 右侧用量栏并排。.main 本身是纵向的，这一层负责转横 */
+.chat-row { flex: 1; min-height: 0; display: flex; }
 /* SPA 的落位区：这个 div 只负责量尺寸，真正的内容是主进程挂上来的 WebContentsView */
-.app-slot { flex: 1; min-height: 0; }
+.app-slot { flex: 1; min-width: 0; min-height: 0; }
 
 .panel { flex: 1; min-height: 0; overflow: auto; padding: 26px 30px 40px; user-select: text; }
 .panel-head { margin: 0 0 4px; font-size: 17px; font-weight: 650; letter-spacing: .01em; }

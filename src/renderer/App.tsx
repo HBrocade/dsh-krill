@@ -51,12 +51,14 @@ export function App(): React.JSX.Element {
       <Sidebar active={panel} onSelect={setPanel} backend={backend} />
       <div className="main">
         {panel === 'chat' ? (
-          <>
+          // .main 是纵向 flex（面板要竖着铺），所以会话页得自己套一层横向容器，
+          // 否则右栏会掉到 SPA 下面去
+          <div className="chat-row">
             <div className="app-slot" ref={slotRef} />
             {/* 右栏是 slot 的兄弟节点：ResizeObserver 盯的就是 slot，
                 加一列它自然变窄，SPA 的落位不用主进程配合 */}
             <UsageColumn />
-          </>
+          </div>
         ) : null}
         {panel === 'logs' ? <LogsPanel /> : null}
         {panel === 'updates' ? <UpdatesPanel /> : null}
