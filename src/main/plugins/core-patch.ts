@@ -178,9 +178,19 @@ function readPackageVersion(root: string, name: string): string | null {
 // 应用 / 撤销
 // ─────────────────────────────────────────────────────────────────────────────
 
-function runPatch(cwd: string, patchFile: string, reverse: boolean): Promise<{ ok: boolean; out: string }> {
+function runPatch(
+  cwd: string,
+  patchFile: string,
+  reverse: boolean,
+  dryRun = false,
+): Promise<{ ok: boolean; out: string }> {
   return new Promise((resolve) => {
-    const args = ['-p1', '--no-backup-if-mismatch', ...(reverse ? ['-R'] : []), '-i', patchFile]
+    const args = [
+      '-p1', '--no-backup-if-mismatch',
+      // --dry-run 只判断能不能贴，一个字节都不写；失败也不会留下 .rej
+      ...(dryRun ? ['--dry-run'] : []),
+      ...(reverse ? ['-R'] : []), '-i', patchFile,
+    ]
     const proc = spawn('patch', args, { cwd, windowsHide: true })
     let out = ''
     proc.stdout?.on('data', (d: Buffer) => { out += d.toString() })
@@ -188,6 +198,51 @@ function runPatch(cwd: string, patchFile: string, reverse: boolean): Promise<{ o
     proc.on('error', (e) => { resolve({ ok: false, out: `无法启动 patch：${e.message}` }) })
     proc.on('exit', (code) => { resolve({ ok: code === 0, out: out.trim() }) })
   })
+}
+
+/**
+ * 先问「能不能贴」，不动任何文件。
+ *
+ * 之前的做法是直接打，打坏了再 revert 回去 —— 那意味着每次上游升级都要在用户的
+ * 运行时上真做一次破坏再修复，中间还会留下 .rej。而 `patch --dry-run` 本来就能
+ * 回答这个问题。
+ *
+ * 全或无：只要有一处贴不上，整个 mod 就不该被应用 —— 半套补丁比没有更糟，
+ * 插件 import 的导出可能来自没贴上的那半。
+ *
+ * @returns 每处的判定；`ok` 全 true 才代表这个 mod 与当前运行时兼容
+ */
+export async function canApply(pluginDir: string): Promise<PatchOutcome[]> {
+  const decls = readDecls(pluginDir)
+  if (decls.length === 0) return []
+  const root = activeRuntimeRoot()
+  if (root === null) return [{ package: '(全部)', ok: false, detail: '找不到运行时' }]
+
+  const results: PatchOutcome[] = []
+  for (const d of decls) {
+    const pkgDir = join(root, 'node_modules', ...d.package.split('/'))
+    const patchFile = join(pluginDir, d.file)
+    if (!existsSync(pkgDir)) {
+      results.push({ package: d.package, ok: false, detail: `运行时里没有这个包：${pkgDir}` })
+      continue
+    }
+    if (!existsSync(patchFile)) {
+      results.push({ package: d.package, ok: false, detail: `补丁文件不存在：${patchFile}` })
+      continue
+    }
+    // 已经打过的算兼容 —— 它此刻就在生效
+    if (probeApplied(root, d)) {
+      results.push({ package: d.package, ok: true, detail: '已是打过补丁的状态' })
+      continue
+    }
+    const r = await runPatch(pkgDir, patchFile, false, true)
+    results.push({
+      package: d.package,
+      ok: r.ok,
+      detail: r.ok ? '可以应用' : `贴不上：${r.out.slice(0, 300)}`,
+    })
+  }
+  return results
 }
 
 export interface PatchOutcome {

@@ -187,7 +187,9 @@ function appliedCorePatches(): Array<{ plugin: string; package: string }> {
  * 但**必须停用**，不能放着不管：补丁没了而 loader 行还在的话，插件 import 的
  * 正是补丁加进去的导出，后端不是「功能降级」而是启动即崩，整个 App 不可用。
  *
- * 停用前先 revert：半应用状态比没应用更难查。
+ * 判定用 `patch --dry-run`，不写任何文件：全部贴得上才真打，有一处贴不上就
+ * 整个不动、直接停用。之前是「先打、打坏了再撤」，等于每次上游升级都要在
+ * 用户的运行时上真做一次破坏再修复，中间还留一地 .rej。
  */
 async function reconcileMods(
   mods: Array<{ dir: string; name: string }>,
@@ -195,13 +197,34 @@ async function reconcileMods(
 ): Promise<string[]> {
   const removed: string[] = []
   for (const m of mods) {
+    // 先问「能不能贴」——`patch --dry-run` 一个字节都不写
     let outcomes: corePatch.PatchOutcome[]
     try {
-      outcomes = await corePatch.apply(m.dir, onOutput)
+      outcomes = await corePatch.canApply(m.dir)
     } catch (e) {
       outcomes = [{ package: '(全部)', ok: false, detail: e instanceof Error ? e.message : String(e) }]
     }
     const bad = outcomes.filter((o) => !o.ok)
+
+    // 全都贴得上才真打 —— 半套补丁比没有更糟，插件 import 的导出
+    // 可能正来自没贴上的那半
+    if (bad.length === 0 && outcomes.length > 0) {
+      try {
+        const applied = await corePatch.apply(m.dir, onOutput)
+        const failed = applied.filter((o) => !o.ok)
+        if (failed.length > 0) {
+          // 干跑说能贴、真打却失败：多半是权限或磁盘问题，不是版本不兼容，
+          // 所以不停用 —— 停用会把一个本来兼容的插件误判成不兼容
+          log(`${m.name} 干跑通过但实际应用失败：`
+            + failed.map((f) => `${f.package} ${f.detail}`).join('；'), 'stderr')
+          onOutput(`✗ ${m.name} 补丁应用失败（不是版本不兼容）—— 详见日志`)
+          continue
+        }
+      } catch (e) {
+        log(`${m.name} 应用补丁抛错：${e instanceof Error ? e.message : String(e)}`, 'stderr')
+        continue
+      }
+    }
     if (bad.length === 0) {
       if (outcomes.length > 0) {
         log(`${m.name}：${String(outcomes.length)} 处补丁已在新版本上重新应用`)
@@ -217,8 +240,7 @@ async function reconcileMods(
       }
       continue
     }
-    // 半应用状态比没应用更难查 —— 先撤干净再卸
-    try { await corePatch.revert(m.dir, onOutput) } catch { /* 尽力而为 */ }
+    // 不用 revert：干跑没写过任何文件，运行时还是干净的
     try {
       // 只停用，不替用户做卸载的决定 —— 插件里可能有他自己的配置与数据，
       // 停用是可逆的，卸载不是。面板会把「不兼容」说清楚，删不删由他定。
