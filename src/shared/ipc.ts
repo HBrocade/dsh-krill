@@ -446,6 +446,8 @@ export interface EventMap {
   'update:changed': UpdateReport
   'plugins:changed': PluginsState
   'bridge:changed': BridgeStatus
+  /** 会话切换、或当前会话有新消息落盘时推送 */
+  'usage:changed': UsageReport
   /** 主进程要求渲染层切到某个面板（托盘菜单点击等） */
   'nav:goto': { panel: string }
 }
@@ -467,7 +469,7 @@ export const INVOKE_CHANNELS = [
 
 export const EVENT_CHANNELS = [
   'backend:changed', 'log:line', 'update:changed',
-  'plugins:changed', 'bridge:changed', 'nav:goto',
+  'plugins:changed', 'bridge:changed', 'nav:goto', 'usage:changed',
 ] as const satisfies ReadonlyArray<keyof EventMap>
 
 /** preload 在 window.dsh 上暴露的形状。 */

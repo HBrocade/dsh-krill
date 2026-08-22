@@ -14,9 +14,16 @@ import type { Session } from 'electron'
 import { log } from '../backend/log-ring.ts'
 
 let active: string | null = null
+const listeners = new Set<(id: string) => void>()
 
 /** SPA 最近一次操作涉及的会话 id（形如 `session-<uuid>`）；还没观察到返回 null。 */
 export function activeSessionId(): string | null { return active }
+
+/** 订阅「当前会话变了」。切换会话时界面要立刻跟上，不能等下一次轮询。 */
+export function onChange(fn: (id: string) => void): () => void {
+  listeners.add(fn)
+  return () => { listeners.delete(fn) }
+}
 
 /** 从任意 JSON 结构里挖第一个 sessionId —— RPC 载荷的嵌套层次各不相同。 */
 function findSessionId(value: unknown, depth = 0): string | null {
@@ -60,6 +67,9 @@ export function watch(ses: Session, originOf: () => string | null): void {
         if (found === null || found === active) continue
         active = found
         log(`当前会话切换到 ${found}`)
+        for (const fn of listeners) {
+          try { fn(found) } catch { /* 单个订阅者出错不影响其他 */ }
+        }
         return
       }
     } catch { /* 不是 JSON、或结构不认识：旁听失败不该影响任何事 */ }

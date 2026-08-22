@@ -49,9 +49,11 @@ export function UsageColumn(): React.JSX.Element {
 
   useEffect(() => {
     load()
-    // 会话日志是随聊天不断追加的，隔一会儿重读一次。只读本地文件，不发网络请求
-    const t = setInterval(load, 15_000)
-    return () => { clearInterval(t) }
+    // 主进程推：切换会话、当前会话有新消息落盘，都会立刻送一份过来
+    const off = window.dsh.on('usage:changed', setR)
+    // 兜底轮询留得很稀 —— 推送才是主路径，这条只防「监听失效了自己不知道」
+    const t = setInterval(load, 60_000)
+    return () => { off(); clearInterval(t) }
   }, [load])
 
   const refresh = (): void => {

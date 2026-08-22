@@ -109,8 +109,28 @@ export function recent(limit = 8): SessionUsage[] {
   return listSessions().slice(0, limit).map(projectSession)
 }
 
-/** 当前正在用的那个会话 —— 取最后写入的那个。 */
-export function current(): SessionUsage | null {
+/**
+ * 按 id 找会话文件。
+ *
+ * 目录名有两种写法并存：新的是 `session-<uuid>`（和 RPC 里的 sessionId 一致），
+ * 老会话是裸 `<uuid>`。两种都认，否则老对话会显示成「没有用量记录」。
+ */
+export function findById(sessionId: string): SessionFile | null {
+  const bare = sessionId.startsWith('session-') ? sessionId.slice('session-'.length) : sessionId
+  return listSessions().find((f) => f.id === sessionId || f.id === bare) ?? null
+}
+
+/**
+ * 当前会话。
+ *
+ * 优先用 SPA 正在打开的那个（旁听 RPC 得来）；拿不到才退回「最后写入的」——
+ * 后者在「切到旧对话但没发消息」时是错的，那个文件那时根本没被写过。
+ */
+export function current(activeId: string | null): SessionUsage | null {
+  if (activeId !== null) {
+    const f = findById(activeId)
+    if (f !== null) return projectSession(f)
+  }
   const [newest] = listSessions()
   return newest === undefined ? null : projectSession(newest)
 }

@@ -180,6 +180,10 @@ async function main(): Promise<void> {
     getShellContents()?.send('update:changed', r)
     setUpdateReport(r)
   })
+
+  // 用量：会话切换、或当前会话有新内容落盘时推给界面 —— 右栏据此即时刷新
+  usage.onChanged((r) => { getShellContents()?.send('usage:changed', r) })
+  usage.start()
   updates.start()
 
   plugins.onChange((s) => { getShellContents()?.send('plugins:changed', s) })
@@ -277,6 +281,7 @@ app.on('window-all-closed', () => {
 
 app.on('will-quit', () => {
   updates.stop()
+  usage.stop()
   closeLog()
 })
 
