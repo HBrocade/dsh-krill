@@ -22,7 +22,10 @@ function ModelRow({ m }: { m: ModelUsage }): React.JSX.Element {
   const hitRate = total === 0 ? 0 : Math.round((m.cacheReadTokens / total) * 100)
   return (
     <div className="usage-model">
-      <div className="usage-model-name" title={m.model}>{m.model}</div>
+      <div className="usage-model-name" title={`${m.provider}/${m.model}`}>
+        {m.model}
+        <i className="usage-provider">{m.provider}</i>
+      </div>
       <div className="usage-grid">
         <span>输入</span><b>{short(m.inputTokens)}</b>
         <span>输出</span><b>{short(m.outputTokens)}</b>
@@ -107,7 +110,7 @@ export function UsageColumn(): React.JSX.Element {
         {cur === null || cur.models.length === 0 ? (
           <div className="muted usage-empty">还没有用量记录</div>
         ) : (
-          cur.models.map((m) => <ModelRow key={m.model} m={m} />)
+          cur.models.map((m) => <ModelRow key={`${m.provider}/${m.model}`} m={m} />)
         )}
       </div>
 

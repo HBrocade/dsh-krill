@@ -11,6 +11,7 @@
 import { BaseWindow, WebContentsView, shell, screen } from 'electron'
 import { join } from 'node:path'
 import { log } from '../backend/log-ring.ts'
+import * as activeSession from './active-session.ts'
 import type { Rect } from '@shared/ipc'
 
 let win: BaseWindow | null = null
@@ -113,6 +114,8 @@ export function attachApp(url: string): void {
     appView.setBackgroundColor('#0B0E15')
     win.contentView.addChildView(appView)
     fenceNavigation(appView, (u) => appUrl !== null && u.startsWith(appUrl))
+    // 旁听 SPA 发给后端的 RPC，从中认出它当前打开的是哪个会话
+    activeSession.watch(appView.webContents.session, () => appUrl)
     appView.webContents.on('render-process-gone', (_e, details) => {
       log(`dsh 页面渲染进程异常退出：${JSON.stringify(details)}`, 'stderr')
     })

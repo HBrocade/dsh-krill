@@ -177,6 +177,12 @@ export interface EnvReport {
 /** 一个模型在某个范围内的 token 用量。数字全部来自 provider 响应，精确。 */
 export interface ModelUsage {
   model: string
+  /**
+   * 供应商路由名。必须显示 —— 会话里可能混用不同供应商（实测有 `opencode-go/hy3`
+   * 和 `deepseek-official/deepseek-v4-pro` 出现在同一批会话里），而余额只反映
+   * DeepSeek 那一家。不标出来会让人把别家的 token 也算进 DeepSeek 的账。
+   */
+  provider: string
   /** 有多少次带用量的请求 */
   calls: number
   /** 已减掉缓存命中部分 —— DeepSeek 的 prompt_tokens 是含缓存的，dsh 做了扣减 */

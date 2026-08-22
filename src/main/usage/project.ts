@@ -25,21 +25,27 @@ interface RawUsage {
 
 interface AssistantMessageData {
   usage?: RawUsage
-  message?: { source?: { model?: unknown } }
+  message?: { source?: { model?: unknown; provider?: unknown } }
 }
 
-/** 从一条 `assistant/message` 里取出「模型 + 用量」；不是这类事件返回 null。 */
-function readTurn(e: SessionEvent): { model: string; usage: RawUsage } | null {
+/** 从一条 `assistant/message` 里取出「供应商 + 模型 + 用量」；不是这类事件返回 null。 */
+function readTurn(e: SessionEvent): { provider: string; model: string; usage: RawUsage } | null {
   if (e.type !== 'assistant/message') return null
   const d = e.data as AssistantMessageData | undefined
   if (d?.usage === undefined) return null
   const model = d.message?.source?.model
-  return { model: typeof model === 'string' ? model : '(未知模型)', usage: d.usage }
+  const provider = d.message?.source?.provider
+  return {
+    provider: typeof provider === 'string' ? provider : '(未知)',
+    model: typeof model === 'string' ? model : '(未知模型)',
+    usage: d.usage,
+  }
 }
 
-function emptyModelUsage(model: string): ModelUsage {
+function emptyModelUsage(model: string, provider = '—'): ModelUsage {
   return {
     model,
+    provider,
     calls: 0,
     inputTokens: 0,
     outputTokens: 0,
@@ -62,13 +68,15 @@ export function projectSession(file: SessionFile): SessionUsage {
     }
     const turn = readTurn(e)
     if (turn === null) continue
-    const m = byModel.get(turn.model) ?? emptyModelUsage(turn.model)
+    // 按「供应商 + 模型」分组：同名模型经不同路由的价格与账户都不同
+    const key = `${turn.provider}/${turn.model}`
+    const m = byModel.get(key) ?? emptyModelUsage(turn.model, turn.provider)
     m.calls += 1
     m.inputTokens += turn.usage.inputTokens ?? 0
     m.outputTokens += turn.usage.outputTokens ?? 0
     m.cacheReadTokens += turn.usage.cacheReadTokens ?? 0
     m.reasoningTokens += turn.usage.reasoningTokens ?? 0
-    byModel.set(turn.model, m)
+    byModel.set(key, m)
   }
 
   const models = [...byModel.values()].sort((a, b) => b.outputTokens - a.outputTokens)
@@ -81,6 +89,7 @@ export function projectSession(file: SessionFile): SessionUsage {
     models,
     totals: models.reduce((acc, m) => ({
       model: '合计',
+      provider: '—',
       calls: acc.calls + m.calls,
       inputTokens: acc.inputTokens + m.inputTokens,
       outputTokens: acc.outputTokens + m.outputTokens,
