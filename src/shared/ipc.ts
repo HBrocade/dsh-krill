@@ -227,12 +227,37 @@ export interface BalanceInfo {
   at: number
 }
 
+/**
+ * 一个会话的计费状态。
+ *
+ * 每个会话记住自己「第一次被看到时的余额」，之后的差值就是这个会话开着的期间
+ * 账户少掉的钱。
+ *
+ * **它不是精确的会话成本**：余额是账户级的，同一时间另一个会话、桥接任务、
+ * 或者别的工具在用同一个账号，花的钱都会算进来。当作「这段时间账户少了多少」
+ * 看才对。界面上要把这句说清楚，不能让它看着像一笔账。
+ */
+export interface SessionBilling {
+  sessionId: string
+  currency: string
+  /** 首次看到这个会话时的余额 */
+  openingBalance: number
+  /** 最近一次查到的余额 */
+  latestBalance: number
+  /** openingBalance - latestBalance；为正表示这期间账户少了这么多 */
+  spent: number
+  openedAt: number
+  updatedAt: number
+}
+
 export interface UsageReport {
   current: SessionUsage | null
   recent: SessionUsage[]
   balance: BalanceInfo | null
-  /** 上一次余额与当前余额的差 —— 这段时间的真实花费，负数表示花掉了 */
-  balanceDelta: number | null
+  /** 当前会话的计费状态；没查过余额、或当前会话没走官方路由时为 null */
+  billing: SessionBilling | null
+  /** 记着计费状态的会话数 —— 界面用不到，排查「清理有没有生效」时有用 */
+  trackedSessions: number
   /** 没配 DeepSeek 凭据时为 false，界面据此说明为什么没有余额 */
   hasApiKey: boolean
   /**

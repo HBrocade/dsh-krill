@@ -158,6 +158,23 @@ export function findById(sessionId: string): SessionFile | null {
 }
 
 /**
+ * 丢掉已经不存在的会话的累加状态。
+ *
+ * `accumulated` 是按文件路径攒的，会话被删掉后那份状态没人再用，却一直占着
+ * 内存 —— 一个大会话的 byModel 加上已消费位置，攒几十个就不小了。
+ */
+export function pruneAccumulated(): number {
+  const alive = new Set(listSessions().map((f) => f.path))
+  let removed = 0
+  for (const path of [...accumulated.keys()]) {
+    if (alive.has(path)) continue
+    accumulated.delete(path)
+    removed += 1
+  }
+  return removed
+}
+
+/**
  * 当前会话。
  *
  * 知道是哪个会话时就**只认那个**：找不到对应的日志文件说明它还没产生任何用量

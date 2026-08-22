@@ -11,12 +11,12 @@
 import { log } from '../backend/log-ring.ts'
 import * as project from './project.ts'
 import { fetchBalance, hasApiKey } from './balance.ts'
+import * as billing from './billing.ts'
 import { activeSessionId, onChange as onSessionChange } from '../window/active-session.ts'
 import { watch as watchFile, type FSWatcher } from 'node:fs'
 import type { BalanceInfo, ModelUsage, UsageReport } from '@shared/ipc'
 
-/** 上一次查到的余额，用来算差值。进程内保存即可 —— 跨重启的花费统计不是这个功能的目标。 */
-let previous: BalanceInfo | null = null
+/** 最近一次查到的余额。按会话的记账在 billing.ts 里，这里只留「账户此刻多少钱」。 */
 let latest: BalanceInfo | null = null
 let lastError: string | null = null
 
@@ -49,7 +49,8 @@ function assemble(): UsageReport {
     // 表现就是切模型、切思考级别这类操作发卡。界面目前也不显示它。
     recent: [],
     balance: latest,
-    balanceDelta: previous !== null && latest !== null ? latest.total - previous.total : null,
+    billing: billing.get(activeSessionId()),
+    trackedSessions: billing.count(),
     hasApiKey: hasApiKey(),
     usesOfficial: officialTotals !== null,
     officialTotals,
@@ -66,7 +67,7 @@ export function state(): UsageReport {
     log(`用量投影失败：${msg}`, 'stderr')
     return {
       current: null, recent: [], balance: latest,
-      balanceDelta: null, hasApiKey: hasApiKey(),
+      billing: null, trackedSessions: billing.count(), hasApiKey: hasApiKey(),
       usesOfficial: false, officialTotals: null, error: msg,
     }
   }
@@ -82,9 +83,12 @@ export async function refresh(): Promise<UsageReport> {
   lastError = null
   try {
     const next = await fetchBalance()
-    // 只有真的变过才推进 previous，否则连点两次刷新会把差值抹成 0
-    if (latest !== null && latest.total !== next.total) previous = latest
     latest = next
+    // 只给走过官方路由的会话记账 —— 别家路由的消耗根本不经这个账户
+    const cur = project.current(activeSessionId())
+    if (cur?.models.some((m) => m.official) === true) {
+      billing.record(activeSessionId(), next)
+    }
   } catch (e) {
     lastError = e instanceof Error ? e.message : String(e)
     log(`余额查询失败：${lastError}`, 'stderr')
@@ -148,16 +152,34 @@ function rewatch(sessionId: string | null): void {
  * 会话切换时**立刻**推一次，不等文件变化 —— 切过去看的是历史用量，
  * 那个文件可能根本不会再被写。
  */
+/** 定期清理的句柄。 */
+let sweeper: NodeJS.Timeout | null = null
+
+/**
+ * 清掉已经不存在的会话留下的东西。
+ *
+ * 会话能在界面上删除或归档。留着它的账不只是占内存 —— 万一同一个 id 被重新用到，
+ * 还会给出一个横跨很久的、毫无意义的差值。
+ */
+export function sweep(): void {
+  const gone = billing.prune((id) => project.findById(id) !== null)
+  const acc = project.pruneAccumulated()
+  if (gone > 0 || acc > 0) log(`用量清理：计费记录 ${String(gone)} 条、累加状态 ${String(acc)} 份`)
+}
+
 export function start(): void {
   onSessionChange((id) => {
     rewatch(id)
     emit()
   })
   rewatch(activeSessionId())
+  // 十分钟一次就够：会话不会频繁消失，扫一遍也只是列目录加比对
+  sweeper = setInterval(sweep, 10 * 60_000)
 }
 
 /** 退出时收掉监听，别留 fd。 */
 export function stop(): void {
+  if (sweeper !== null) { clearInterval(sweeper); sweeper = null }
   if (debounce !== null) { clearTimeout(debounce); debounce = null }
   watcher?.close()
   watcher = null

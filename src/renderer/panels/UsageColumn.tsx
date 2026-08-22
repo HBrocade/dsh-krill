@@ -105,10 +105,14 @@ export function UsageColumn(): React.JSX.Element | null {
                 : `${bal.currency} ••••`}
               <i className="usage-hint">{showBalance ? '点击隐藏' : '点击显示'}</i>
             </div>
-            {r?.balanceDelta !== null && r?.balanceDelta !== undefined ? (
+            {r.billing !== null ? (
               <div className="usage-delta">
-                较上次 {r.balanceDelta >= 0 ? '+' : ''}{r.balanceDelta.toFixed(2)}
-                <i>（两次查询之差 = 期间真实花费）</i>
+                本会话期间 {r.billing.spent >= 0 ? '−' : '+'}
+                {Math.abs(r.billing.spent).toFixed(2)}
+                <i>
+                  与首次查看这个会话时的余额之差。账户是共用的 ——
+                  同时跑的别的会话或工具也会算进来。
+                </i>
               </div>
             ) : null}
             {!bal.available ? <div className="err-line">账户不可用</div> : null}
