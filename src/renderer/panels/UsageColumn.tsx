@@ -39,7 +39,7 @@ function ModelRow({ m }: { m: ModelUsage }): React.JSX.Element {
   )
 }
 
-export function UsageColumn(): React.JSX.Element {
+export function UsageColumn(): React.JSX.Element | null {
   const [r, setR] = useState<UsageReport | null>(null)
   const [busy, setBusy] = useState(false)
   const [showBalance, setShowBalance] = useState(false)
@@ -70,6 +70,13 @@ export function UsageColumn(): React.JSX.Element {
   const cur = r?.current ?? null
   const bal = r?.balance ?? null
 
+  // 整栏由「这个会话有没有走过 DeepSeek 官方路由」决定。
+  //
+  // 这是一块计费面板：会话用的是 MiniMax、opencode-go 这类别家路由时，它一个
+  // 数字都说明不了 DeepSeek 账户的事，占着一列反而误导。收起来 SPA 也能宽一点 ——
+  // 外壳的 ResizeObserver 盯的是落位区，这里返回 null 它就自然铺满。
+  if (r === null || !r.usesOfficial) return null
+
   return (
     <aside className="usage-col">
       <div className="usage-head">
@@ -79,9 +86,6 @@ export function UsageColumn(): React.JSX.Element {
         </button>
       </div>
 
-      {/* 计费面板只在这次会话真的走过 DeepSeek 官方路由时才出现 ——
-          没走过就一分钱都不经这个账户，摆个余额只会让人误以为两者相关 */}
-      {r?.usesOfficial === true ? (
       <div className="usage-card">
         <div className="usage-card-title">
           账户余额
@@ -117,7 +121,6 @@ export function UsageColumn(): React.JSX.Element {
           </div>
         ) : null}
       </div>
-      ) : null}
 
       <div className="usage-card">
         <div className="usage-card-title">

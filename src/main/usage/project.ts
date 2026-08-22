@@ -160,13 +160,17 @@ export function findById(sessionId: string): SessionFile | null {
 /**
  * 当前会话。
  *
- * 优先用 SPA 正在打开的那个（旁听 RPC 得来）；拿不到才退回「最后写入的」——
- * 后者在「切到旧对话但没发消息」时是错的，那个文件那时根本没被写过。
+ * 知道是哪个会话时就**只认那个**：找不到对应的日志文件说明它还没产生任何用量
+ * （刚建的新会话就是这样），该显示「没有记录」，而不是退回去显示别的会话。
+ *
+ * 退回「最后写入的」只在**从未观察到会话 id** 时才成立 —— 那是刚启动、
+ * 用户还没在界面上动过任何东西的场景。之前无条件兜底，导致新建会话时右栏
+ * 显示的是上一个对话的数字，看着像统计错了。
  */
 export function current(activeId: string | null): SessionUsage | null {
   if (activeId !== null) {
     const f = findById(activeId)
-    if (f !== null) return projectSession(f)
+    return f === null ? null : projectSession(f)
   }
   const [newest] = listSessions()
   return newest === undefined ? null : projectSession(newest)
