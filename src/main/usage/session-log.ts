@@ -24,20 +24,35 @@ const FRAME_MAGIC = Buffer.from([0x28, 0xB5, 0x2F, 0xFD])
  * 魔数有可能出现在压缩数据内部，所以不能拿它硬切：从一个起点开始，先试到下一个
  * 起点，解不出来就把边界往后挪一个，直到解成功。误判的魔数会被自然吸收进帧体。
  */
-export function decodeMultiFrame(buf: Buffer): string {
+export interface DecodeResult {
+  text: string
+  /** 已成功消费到的字节位置。下次从这里接着解即可 —— 日志只追加，不重写。 */
+  consumed: number
+}
+
+/**
+ * 从 `from` 字节处往后解。
+ *
+ * 支持增量是因为会话日志只会追加：一个 7.4MB 的会话全量解要 618ms，而它正在被
+ * 写的时候每次追加都会让「按 mtime 缓存」失效 —— 流式回答期间就会变成每 600ms
+ * 卡半秒多。只解新增的那几帧，开销就与新数据量成正比，与文件多大无关。
+ */
+export function decodeMultiFrame(buf: Buffer, from = 0): DecodeResult {
   const starts: number[] = []
-  for (let i = 0; i + 4 <= buf.length; i += 1) {
+  for (let i = from; i + 4 <= buf.length; i += 1) {
     if (buf.compare(FRAME_MAGIC, 0, 4, i, i + 4) === 0) starts.push(i)
   }
-  if (starts.length === 0) return ''
+  if (starts.length === 0) return { text: '', consumed: from }
 
   const parts: Buffer[] = []
   let i = 0
+  let consumed = from
   while (i < starts.length) {
     let j = i + 1
     let decoded: Buffer | null = null
+    let end = buf.length
     while (j <= starts.length) {
-      const end = j < starts.length ? starts[j]! : buf.length
+      end = j < starts.length ? starts[j]! : buf.length
       try {
         decoded = zstdDecompressSync(buf.subarray(starts[i]!, end))
         break
@@ -45,12 +60,13 @@ export function decodeMultiFrame(buf: Buffer): string {
         j += 1
       }
     }
-    // 解不出来就停在这里：已读到的部分仍然有效，宁可少算也不要抛
+    // 解不出来就停在这里：可能是正在写入的半截帧，下次再来
     if (decoded === null) break
     parts.push(decoded)
+    consumed = end
     i = j
   }
-  return Buffer.concat(parts).toString('utf8')
+  return { text: Buffer.concat(parts).toString('utf8'), consumed }
 }
 
 export interface SessionEvent {
@@ -97,14 +113,23 @@ function safeReaddir(dir: string): string[] {
   try { return readdirSync(dir) } catch { return [] }
 }
 
-/** 读并解析一个会话的全部事件。坏行跳过 —— 日志是追加写的，末尾可能是半行。 */
-export function readEvents(path: string): SessionEvent[] {
-  let text: string
-  try { text = decodeMultiFrame(readFileSync(path)) } catch { return [] }
+/**
+ * 读某个会话从 `from` 起的事件。坏行跳过 —— 日志是追加写的，末尾可能是半行。
+ *
+ * @returns 事件与「已消费到哪」，后者传回下一次调用即可增量续读。
+ */
+export function readEventsFrom(path: string, from = 0): { events: SessionEvent[]; consumed: number } {
+  let decoded: DecodeResult
+  try { decoded = decodeMultiFrame(readFileSync(path), from) } catch { return { events: [], consumed: from } }
   const events: SessionEvent[] = []
-  for (const line of text.split('\n')) {
+  for (const line of decoded.text.split('\n')) {
     if (line.trim() === '') continue
     try { events.push(JSON.parse(line) as SessionEvent) } catch { /* 半行，跳过 */ }
   }
-  return events
+  return { events, consumed: decoded.consumed }
+}
+
+/** 读全部事件。 */
+export function readEvents(path: string): SessionEvent[] {
+  return readEventsFrom(path).events
 }

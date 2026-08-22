@@ -12,7 +12,7 @@
  * 三个模型、三类 token，单价表是我们唯一维护不住的东西 —— 它会在我们不知情时过期，
  * 然后给出一个看起来精确的错数字。金额用余额差另算，那个一分钱都不会错。
  */
-import { readEvents, listSessions, type SessionEvent, type SessionFile } from './session-log.ts'
+import { readEventsFrom, listSessions, type SessionEvent, type SessionFile } from './session-log.ts'
 import type { ModelUsage, SessionUsage } from '@shared/ipc'
 
 interface RawUsage {
@@ -54,47 +54,74 @@ function emptyModelUsage(model: string, provider = '—'): ModelUsage {
   }
 }
 
+/**
+ * 每个会话的累加状态。
+ *
+ * 会话日志只会追加，所以不必每次重头解：记住「已消费到第几字节」和当前累计值，
+ * 下次只处理新增的那几帧。开销于是与新数据量成正比，与文件多大无关 ——
+ * 一个 7.4MB 的会话全量解要 618ms，而它正在被写时每次追加都会让按 mtime 做的
+ * 缓存失效，流式回答期间就成了每 600ms 卡半秒多。
+ */
+interface Accumulated {
+  consumed: number
+  byModel: Map<string, ModelUsage>
+  firstAt: number | null
+  lastAt: number | null
+}
+const accumulated = new Map<string, Accumulated>()
+
 /** 投影一个会话：把每条 assistant/message 的用量按模型累加。 */
 export function projectSession(file: SessionFile): SessionUsage {
-  const events = readEvents(file.path)
-  const byModel = new Map<string, ModelUsage>()
-  let firstAt: number | null = null
-  let lastAt: number | null = null
-
-  for (const e of events) {
-    if (typeof e.time === 'number') {
-      firstAt ??= e.time
-      lastAt = e.time
-    }
-    const turn = readTurn(e)
-    if (turn === null) continue
-    // 按「供应商 + 模型」分组：同名模型经不同路由的价格与账户都不同
-    const key = `${turn.provider}/${turn.model}`
-    const m = byModel.get(key) ?? emptyModelUsage(turn.model, turn.provider)
-    m.calls += 1
-    m.inputTokens += turn.usage.inputTokens ?? 0
-    m.outputTokens += turn.usage.outputTokens ?? 0
-    m.cacheReadTokens += turn.usage.cacheReadTokens ?? 0
-    m.reasoningTokens += turn.usage.reasoningTokens ?? 0
-    byModel.set(key, m)
+  let acc = accumulated.get(file.path)
+  if (acc === undefined) {
+    acc = { consumed: 0, byModel: new Map(), firstAt: null, lastAt: null }
+    accumulated.set(file.path, acc)
   }
 
-  const models = [...byModel.values()].sort((a, b) => b.outputTokens - a.outputTokens)
+  // 文件比记录的还短 = 被重写或换了会话，之前的累计作废
+  if (file.sizeBytes < acc.consumed) {
+    acc = { consumed: 0, byModel: new Map(), firstAt: null, lastAt: null }
+    accumulated.set(file.path, acc)
+  }
+
+  if (file.sizeBytes > acc.consumed) {
+    const { events, consumed } = readEventsFrom(file.path, acc.consumed)
+    acc.consumed = consumed
+    for (const e of events) {
+      if (typeof e.time === 'number') {
+        acc.firstAt ??= e.time
+        acc.lastAt = e.time
+      }
+      const turn = readTurn(e)
+      if (turn === null) continue
+      // 按「供应商 + 模型」分组：同名模型经不同路由的价格与账户都不同
+      const key = `${turn.provider}/${turn.model}`
+      const m = acc.byModel.get(key) ?? emptyModelUsage(turn.model, turn.provider)
+      m.calls += 1
+      m.inputTokens += turn.usage.inputTokens ?? 0
+      m.outputTokens += turn.usage.outputTokens ?? 0
+      m.cacheReadTokens += turn.usage.cacheReadTokens ?? 0
+      m.reasoningTokens += turn.usage.reasoningTokens ?? 0
+      acc.byModel.set(key, m)
+    }
+  }
+
+  const models = [...acc.byModel.values()].sort((a, b) => b.outputTokens - a.outputTokens)
   return {
     id: file.id,
     workspace: file.workspace,
     updatedAt: file.mtimeMs,
-    firstEventAt: firstAt,
-    lastEventAt: lastAt,
+    firstEventAt: acc.firstAt,
+    lastEventAt: acc.lastAt,
     models,
-    totals: models.reduce((acc, m) => ({
+    totals: models.reduce((t, m) => ({
       model: '合计',
       provider: '—',
-      calls: acc.calls + m.calls,
-      inputTokens: acc.inputTokens + m.inputTokens,
-      outputTokens: acc.outputTokens + m.outputTokens,
-      cacheReadTokens: acc.cacheReadTokens + m.cacheReadTokens,
-      reasoningTokens: acc.reasoningTokens + m.reasoningTokens,
+      calls: t.calls + m.calls,
+      inputTokens: t.inputTokens + m.inputTokens,
+      outputTokens: t.outputTokens + m.outputTokens,
+      cacheReadTokens: t.cacheReadTokens + m.cacheReadTokens,
+      reasoningTokens: t.reasoningTokens + m.reasoningTokens,
     }), emptyModelUsage('合计')),
   }
 }

@@ -23,7 +23,10 @@ let lastError: string | null = null
 function assemble(): UsageReport {
   return {
     current: project.current(activeSessionId()),
-    recent: project.recent(6),
+    // 不在这里算 recent：它要把最近 6 个会话全解一遍，实测 659ms（其中一个 7.4MB），
+    // 而这个函数在流式回答期间每 600ms 就会被调一次，全压在主进程上 ——
+    // 表现就是切模型、切思考级别这类操作发卡。界面目前也不显示它。
+    recent: [],
     balance: latest,
     balanceDelta: previous !== null && latest !== null ? latest.total - previous.total : null,
     hasApiKey: hasApiKey(),

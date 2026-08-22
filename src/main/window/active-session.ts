@@ -25,25 +25,25 @@ export function onChange(fn: (id: string) => void): () => void {
   return () => { listeners.delete(fn) }
 }
 
-/** 从任意 JSON 结构里挖第一个 sessionId —— RPC 载荷的嵌套层次各不相同。 */
-function findSessionId(value: unknown, depth = 0): string | null {
-  if (depth > 6 || value === null || typeof value !== 'object') return null
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const found = findSessionId(v, depth + 1)
-      if (found !== null) return found
-    }
-    return null
-  }
-  const obj = value as Record<string, unknown>
-  const direct = obj['sessionId']
-  if (typeof direct === 'string' && direct !== '') return direct
-  for (const v of Object.values(obj)) {
-    const found = findSessionId(v, depth + 1)
-    if (found !== null) return found
-  }
-  return null
+/**
+ * 取 sessionId。
+ *
+ * 只看顶层和 `payload` 这一层 —— 实测 RPC 就放在这两处。先前写的是深度 6 的
+ * 全量递归，发消息那种带完整历史的载荷会被整棵走一遍，白白占住主进程。
+ */
+function findSessionId(root: unknown): string | null {
+  if (root === null || typeof root !== 'object') return null
+  const obj = root as Record<string, unknown>
+  const top = obj['sessionId']
+  if (typeof top === 'string' && top !== '') return top
+  const payload = obj['payload']
+  if (payload === null || typeof payload !== 'object') return null
+  const inner = (payload as Record<string, unknown>)['sessionId']
+  return typeof inner === 'string' && inner !== '' ? inner : null
 }
+
+/** 超过这个大小的载荷不解析：会话 id 从来不在大 body 里，而解析大 JSON 会卡住主进程。 */
+const MAX_BODY_SCAN = 64 * 1024
 
 /**
  * 在给定的 session 上装观察器。
@@ -62,7 +62,7 @@ export function watch(ses: Session, originOf: () => string | null): void {
       const parts = details.uploadData
       if (parts === undefined || parts.length === 0) return
       for (const part of parts) {
-        if (part.bytes === undefined) continue
+        if (part.bytes === undefined || part.bytes.length > MAX_BODY_SCAN) continue
         const found = findSessionId(JSON.parse(part.bytes.toString('utf8')) as unknown)
         if (found === null || found === active) continue
         active = found
