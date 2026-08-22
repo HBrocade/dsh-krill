@@ -272,6 +272,31 @@ export interface UsageReport {
   error: string | null
 }
 
+/** 识图配置，落在 dsh 的 `~/.dsh/settings.yaml` 的 `vision:` 段。 */
+export interface VisionConfig {
+  enabled: boolean
+  /** 目前只有 `ollama-vision` 一条通道 */
+  provider: string
+  /** Ollama 里的模型名，例如 `qwen3.8:27b-q6` */
+  model: string
+}
+
+export interface VisionModel {
+  name: string
+  /** Ollama 上报的 capabilities 里有没有 vision —— 没有的选了也用不了 */
+  vision: boolean
+}
+
+export interface VisionState {
+  config: VisionConfig
+  ollamaRunning: boolean
+  models: VisionModel[]
+  /** 配了一个本机没有的模型 —— 404 就是这么来的 */
+  modelMissing: boolean
+  /** 配的模型存在但不支持识图 */
+  modelNotVision: boolean
+}
+
 export interface UpdateReport {
   checkedAt: number | null
   checking: boolean
@@ -456,6 +481,8 @@ export interface InvokeMap {
   'update:state': () => UpdateReport
   'update:check': () => OpResult<UpdateReport>
   'update:upgradeCli': (args: { confirm: boolean }) => OpResult<string>
+  'vision:state': () => VisionState
+  'vision:setConfig': (next: VisionConfig) => OpResult<VisionState>
   'usage:state': () => UsageReport
   'usage:refresh': () => OpResult<UsageReport>
   'env:check': () => EnvReport
@@ -503,6 +530,7 @@ export const INVOKE_CHANNELS = [
   'update:npmConfig', 'update:setNpmConfig',
   'env:check', 'env:installNode', 'env:removeNode',
   'usage:state', 'usage:refresh',
+  'vision:state', 'vision:setConfig',
   'update:appDownload', 'update:appInstall',
   'plugins:state', 'plugins:refresh', 'plugins:install', 'plugins:uninstall',
   'plugins:setDisabled', 'plugins:patchDoctor',

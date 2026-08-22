@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { PluginsState, PluginEntry, InstallOutcome, OpResult, RecognitionStep } from '@shared/ipc'
+import { VisionCard } from './VisionCard.tsx'
 
 const CHANNEL_LABEL: Record<PluginEntry['channel'], string> = {
   official: '官方装配',
@@ -48,6 +49,10 @@ export function PluginsPanel(): React.JSX.Element {
         合并 profile 依赖、层叠成员与注入器运行时状态
         {s.injectorAvailable ? '' : ' · 注入器不可用，热更新通道关闭'}
       </p>
+
+      {/* 识图是这里唯一带配置的插件，配错模型只会以 404 的形式出现在聊天里，
+          所以把入口放在它旁边 */}
+      <VisionCard />
 
       <div className="toolbar">
         <button className="btn" disabled={busy !== null} onClick={() => {

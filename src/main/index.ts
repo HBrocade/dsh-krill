@@ -17,6 +17,7 @@ import * as bridge from './bridge/server.ts'
 import { loadConfig, saveConfig } from './config/store.ts'
 import * as envCheck from './env/check.ts'
 import * as usage from './usage/index.ts'
+import * as visionConfig from './vision/config.ts'
 import { installNode, removeNode } from './env/install-node.ts'
 import type { AppInfo, OpResult, Rect } from '@shared/ipc'
 
@@ -91,6 +92,9 @@ function registerIpc(): void {
   ipcMain.handle('update:check', () => guard(() => updates.checkAll({ force: true, reason: '面板手动' })))
   ipcMain.handle('update:upgradeCli', (_e, args: { confirm: boolean }) => guard(() => updates.upgradeCli(args)))
   ipcMain.handle('update:pullSourceRepo', () => guard(() => updates.pullSourceRepo()))
+  ipcMain.handle('vision:state', () => visionConfig.state())
+  ipcMain.handle('vision:setConfig', (_e, next: Parameters<typeof visionConfig.writeConfig>[0]) =>
+    guard(async () => { visionConfig.writeConfig(next); return visionConfig.state() }))
   ipcMain.handle('usage:state', () => usage.state())
   ipcMain.handle('usage:refresh', () => guard(() => usage.refresh()))
   ipcMain.handle('env:check', () => envCheck.inspect())
