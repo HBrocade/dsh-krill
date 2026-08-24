@@ -87,6 +87,35 @@ function cachePath(): string {
   return join(app.getPath('userData'), 'catalog', 'models-dev.json')
 }
 
+function probeCachePath(): string {
+  return join(app.getPath('userData'), 'catalog', 'probes.json')
+}
+
+/**
+ * 探测结果的缓存。
+ *
+ * 每发探测都是一次真实请求，要算进供应商的限额（opencode Go 的额度是按每 5 小时
+ * 计次的）。检查一次十来个候选、失败的还要补打一发，不缓存的话光「看一眼」
+ * 就能吃掉一小截额度。
+ *
+ * 只缓存**结论**，不缓存供应商的原文以外的东西；`force` 时整份丢弃重测 ——
+ * 「不可用」经常是暂时的，用户点强制刷新就是想再问一次。
+ */
+const PROBE_TTL_MS = 6 * 60 * 60 * 1000
+
+type ProbeCache = Record<string, { at: number; verdict: ProbeVerdict; detail: string | null }>
+
+function readProbeCache(): ProbeCache {
+  try { return JSON.parse(readFileSync(probeCachePath(), 'utf8')) as ProbeCache } catch { return {} }
+}
+
+function writeProbeCache(cache: ProbeCache): void {
+  try {
+    mkdirSync(dirname(probeCachePath()), { recursive: true })
+    writeFileSync(probeCachePath(), JSON.stringify(cache), 'utf8')
+  } catch { /* 缓存写不了只是下次多打几发，不该让检查失败 */ }
+}
+
 /** 缓存优先；过期或缺失才走网络，网络失败还有过期缓存兜底。 */
 async function rawModelsDev(force: boolean): Promise<Record<string, unknown>> {
   const path = cachePath()
@@ -171,4 +200,167 @@ export function apiFromNpm(npm: string | null): CatalogApi {
   if (npm === '@ai-sdk/anthropic') return 'anthropic-messages'
   if (npm === '@ai-sdk/openai') return 'openai-responses'
   return 'openai-completions'
+}
+
+/**
+ * 一个模型实际能不能用。
+ *
+ * `GET /models` 列的是**这个网关知道的型号**，不是**你现在能跑通的型号**。
+ * 实测 opencode-go 线上 29 个里就有 5 个用不了：上游说 Unsupported model 的、
+ * preview 期不可用的、要去后台开通数据政策的，还有一个 `ox-alpha-free` ——
+ * 不带工具能聊，一带工具就 503。而 dsh 是 agent，每次调用都带工具定义，
+ * 所以「能聊」在这里根本不算能用。
+ *
+ * pi-ai 的目录是筛过的（它自己 README 就写着只收支持 tool calling 的模型），
+ * 我们从线上清单里补模型，就得自己把这道筛子补上，否则补进来的是一颗地雷：
+ * 用户选了它，聊到一半报一句 `Provider finish_reason: network_error`，
+ * 而那句话既不指向模型也不指向工具。
+ */
+export type ProbeVerdict = 'ok' | 'no-tools' | 'unavailable' | 'forbidden' | 'unknown'
+
+export interface ProbeResult {
+  verdict: ProbeVerdict
+  /** 供应商自己的说法，原样截断；没有则为 null */
+  detail: string | null
+}
+
+/** 一次探测请求：按协议摆出 dsh 真正会用的那种形状。 */
+function probeBody(api: CatalogApi, model: string, withTools: boolean): unknown {
+  if (api === 'openai-responses') {
+    return {
+      model, max_output_tokens: 16, input: 'hi',
+      ...(withTools
+        ? { tools: [{ type: 'function', name: 'noop', parameters: { type: 'object', properties: {} }, strict: false }] }
+        : {}),
+    }
+  }
+  if (api === 'anthropic-messages') {
+    return {
+      model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }],
+      ...(withTools
+        ? { tools: [{ name: 'noop', description: 'noop', input_schema: { type: 'object', properties: {} } }] }
+        : {}),
+    }
+  }
+  return {
+    model, max_tokens: 1, messages: [{ role: 'user', content: 'hi' }],
+    ...(withTools
+      ? { tools: [{ type: 'function', function: { name: 'noop', description: 'noop', parameters: { type: 'object', properties: {} } } }] }
+      : {}),
+  }
+}
+
+function probeUrl(baseUrl: string, api: CatalogApi): string {
+  const root = baseUrl.replace(/\/+$/, '')
+  if (api === 'openai-responses') return `${root}/responses`
+  if (api === 'anthropic-messages') return `${root}/v1/messages`
+  return `${root}/chat/completions`
+}
+
+function probeHeaders(api: CatalogApi, apiKey: string | null): Record<string, string> {
+  const h: Record<string, string> = { 'content-type': 'application/json' }
+  if (apiKey === null) return h
+  // Anthropic 协议认 x-api-key，不认 Authorization；版本头缺了会 400
+  if (api === 'anthropic-messages') {
+    h['x-api-key'] = apiKey
+    h['anthropic-version'] = '2023-06-01'
+  } else {
+    h.authorization = `Bearer ${apiKey}`
+  }
+  return h
+}
+
+/** 供应商回的错误说明，尽量取到人能看懂的那一句。 */
+function errorMessage(text: string): string | null {
+  try {
+    const j = JSON.parse(text) as { error?: { message?: unknown } | string }
+    const e = typeof j.error === 'object' && j.error !== null ? j.error.message : j.error
+    if (typeof e === 'string' && e !== '') return e.slice(0, 200)
+  } catch { /* 非 JSON 就退回原文 */ }
+  const trimmed = text.trim()
+  return trimmed === '' ? null : trimmed.slice(0, 200)
+}
+
+/**
+ * 实测一个模型。
+ *
+ * 先按 dsh 的真实用法（带工具）打一发；失败了再不带工具打一发 ——
+ * 这一步是为了把「模型不支持工具」和「模型压根不可用」分开。两者在界面上
+ * 是完全不同的两句话，混成一句「用不了」等于把 `ox-alpha-free` 这种
+ * 「能聊但当不了 agent」的情况说成故障。
+ *
+ * 探测本身抛异常（超时、DNS）只报 `unknown`，绝不报「不可用」——
+ * 我们这边的网络问题不该让一个好模型背锅。
+ */
+export async function probeModel(
+  args: { baseUrl: string; api: CatalogApi; model: string; apiKey: string | null },
+): Promise<ProbeResult> {
+  return probeOnce(args)
+}
+
+/**
+ * 一批模型的实测结果，走缓存、限并发。
+ *
+ * 并发压到 4：这些请求要算进供应商限额，也可能各自吃满 45 秒超时，
+ * 一口气全发出去既没必要也容易被限流。
+ */
+export async function probeModels(
+  provider: string,
+  items: ReadonlyArray<{ baseUrl: string; api: CatalogApi; model: string }>,
+  apiKey: string | null,
+  force: boolean,
+): Promise<Map<string, ProbeResult>> {
+  const cache = force ? {} : readProbeCache()
+  const out = new Map<string, ProbeResult>()
+  const todo: typeof items = items.filter((it) => {
+    const hit = cache[`${provider}/${it.model}`]
+    if (hit !== undefined && Date.now() - hit.at < PROBE_TTL_MS) {
+      out.set(it.model, { verdict: hit.verdict, detail: hit.detail })
+      return false
+    }
+    return true
+  })
+
+  const queue = [...todo]
+  const workers = Array.from({ length: Math.min(4, queue.length) }, async () => {
+    for (;;) {
+      const it = queue.shift()
+      if (it === undefined) return
+      const r = await probeOnce({ ...it, apiKey })
+      out.set(it.model, r)
+      cache[`${provider}/${it.model}`] = { at: Date.now(), verdict: r.verdict, detail: r.detail }
+    }
+  })
+  await Promise.all(workers)
+  if (todo.length > 0) writeProbeCache(cache)
+  return out
+}
+
+async function probeOnce(
+  args: { baseUrl: string; api: CatalogApi; model: string; apiKey: string | null },
+): Promise<ProbeResult> {
+  const send = async (withTools: boolean): Promise<{ ok: boolean; status: number; body: string }> => {
+    const res = await fetch(probeUrl(args.baseUrl, args.api), {
+      method: 'POST',
+      headers: probeHeaders(args.api, args.apiKey),
+      body: JSON.stringify(probeBody(args.api, args.model, withTools)),
+      signal: AbortSignal.timeout(45_000),
+    })
+    return { ok: res.ok, status: res.status, body: await res.text() }
+  }
+
+  let withTools
+  try { withTools = await send(true) } catch { return { verdict: 'unknown', detail: '探测请求没发出去' } }
+  if (withTools.ok) {
+    // 流式里 zen 会用 finish_reason 报错，非流式则不会 —— 这里 200 就算过
+    return { verdict: 'ok', detail: null }
+  }
+
+  let plain
+  try { plain = await send(false) } catch { plain = null }
+  const detail = errorMessage(withTools.body)
+  if (plain !== null && plain.ok) return { verdict: 'no-tools', detail }
+  if (withTools.status === 401 || withTools.status === 403) return { verdict: 'forbidden', detail }
+  if (withTools.status >= 400) return { verdict: 'unavailable', detail }
+  return { verdict: 'unknown', detail }
 }

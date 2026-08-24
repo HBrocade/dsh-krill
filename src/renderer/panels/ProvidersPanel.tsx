@@ -15,7 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type {
-  CatalogApi, CatalogCandidate, CatalogReport, CatalogRoute, OpResult,
+  CatalogApi, CatalogCandidate, CatalogModelRef, CatalogReport, CatalogRoute, OpResult,
 } from '@shared/ipc'
 
 const API_TAG: Record<CatalogApi, string> = {
@@ -36,7 +36,20 @@ interface XferItem {
   api: CatalogApi
   /** catalog = 目录自带；declared = 已补进配置；candidate = 线上有、还没补 */
   kind: 'catalog' | 'declared' | 'candidate'
+  probe: CatalogModelRef['probe']
+  probeDetail: string | null
   detail: CatalogCandidate | null
+}
+
+/** 实测结论怎么说给人听。null = 目录自带的，没测。 */
+const PROBE_TAG: Record<string, { text: string; cls: string; why: string }> = {
+  'no-tools': {
+    text: '不支持工具', cls: 'tag-bad',
+    why: '带工具定义调用就失败。dsh 每次调用都带工具，所以它当不了会话模型',
+  },
+  unavailable: { text: '用不了', cls: 'tag-bad', why: '供应商列了它，实际调不通' },
+  forbidden: { text: '需开通', cls: 'tag-warn', why: '账号没权限，通常要去供应商后台开通' },
+  unknown: { text: '没测通', cls: 'tag-warn', why: '探测请求本身没打通，别据此下结论' },
 }
 
 function fmtCtx(n: number): string {
@@ -111,7 +124,8 @@ export function ProvidersPanel(): React.JSX.Element {
     ...route.catalog.map((m): XferItem => ({ ...m, kind: 'catalog', detail: null })),
     ...route.declared.map((d): XferItem => ({ ...d, kind: 'declared', detail: null })),
     ...route.candidates.map((c): XferItem => ({
-      id: c.id, name: c.name, api: c.api, kind: 'candidate', detail: c,
+      id: c.id, name: c.name, api: c.api, kind: 'candidate',
+      probe: c.probe, probeDetail: c.probeDetail, detail: c,
     })),
   ]
 
@@ -173,6 +187,9 @@ export function ProvidersPanel(): React.JSX.Element {
         // 「有没有改动」按集合比，不按数量 —— 数量相等但换掉了一个模型同样得能写
         const dirty = [...right].sort().join(' ') !== currentOf(route).sort().join(' ')
         const dropped = route.catalog.length - route.catalogKept.length
+        // 已经补进配置、但实测用不了的 —— 这是最该被看见的一类：
+        // 它现在就摆在模型选择器里，选中它就是一次失败的会话
+        const brokenInUse = route.declared.filter((d) => d.probe !== null && d.probe !== 'ok')
         // 去掉目录里的模型必须写 models 清单，而 modelOverrides 与它互斥
         const blocked = route.hasModelOverrides
           && route.catalog.some((m) => !right.has(m.id))
@@ -193,6 +210,9 @@ export function ProvidersPanel(): React.JSX.Element {
               </span>
               <span className="mono">{route.id}</span>
               {route.declared.length > 0 ? <span className="tag tag-ok">已补 {route.declared.length}</span> : null}
+              {brokenInUse.length > 0
+                ? <span className="tag tag-bad">{brokenInUse.length} 个补进去的用不了</span>
+                : null}
               {dropped > 0 ? <span className="tag tag-dim">已去掉 {dropped}</span> : null}
               {route.candidates.length > 0 ? <span className="tag tag-hot">可补 {route.candidates.length}</span> : null}
               <span className="spacer" />
@@ -227,6 +247,13 @@ export function ProvidersPanel(): React.JSX.Element {
                   <div className="muted hint">目录已经跟上线上，没有要补的。</div>
                 ) : null}
 
+                {brokenInUse.length > 0 ? (
+                  <div className="err-line">
+                    已经补进配置的 <code>{brokenInUse.map((d) => d.id).join('、')}</code> 实测用不了，
+                    现在正摆在模型选择器里 —— 选中它就是一次失败的会话。移到左边再「写入配置」即可摘掉。
+                  </div>
+                ) : null}
+
                 {route.inCatalog && route.error === null && items.length > 0 ? (
                   <>
                     <input
@@ -247,13 +274,16 @@ export function ProvidersPanel(): React.JSX.Element {
                         onMove={(id) => { move(route, [id], true) }}
                       />
                       <div className="xfer-mid">
+                        {/* 只搬测得通的：一键把「用不了」的也搬过去，等于把踩雷排进日程 */}
                         <button
                           className="btn btn-sm"
-                          disabled={busy !== null || leftList.length === 0}
-                          title="把左边（过滤后）全部移到右边"
-                          onClick={() => { move(route, leftList.map((i) => i.id), true) }}
+                          disabled={busy !== null || leftList.every((i) => i.probe !== null && i.probe !== 'ok')}
+                          title="把左边测得通的全部移到右边（用不了的留在左边，可以单独点）"
+                          onClick={() => {
+                            move(route, leftList.filter((i) => i.probe === null || i.probe === 'ok').map((i) => i.id), true)
+                          }}
                         >
-                          全部 &rsaquo;
+                          可用的 &rsaquo;
                         </button>
                         <button
                           className="btn btn-sm"
@@ -348,6 +378,11 @@ export function ProvidersPanel(): React.JSX.Element {
           但这条路线从此<b>不再跟随目录更新</b>（以后 pi-ai 补的新模型不会自己冒出来，
           会出现在左边等你挪）。把目录模型全留着时清单会被删掉，回到自动跟随。
           <br />
+          每个目录外的模型都<b>实测过</b>：按 dsh 的真实用法（带工具定义）向供应商打一发，
+          结果标在行上。<code>GET /models</code> 列的是网关知道的型号，不是你现在跑得通的型号 ——
+          实测 opencode-go 线上就有几个上游 <code>Unsupported model</code>、preview 期不可用、
+          或要去后台开通的。结果缓存 6 小时，「用不了」经常是暂时的。
+          <br />
           协议是按 models.dev 记的 SDK 推的，<b>不保证与官方目录一致</b>；
           标着「元数据缺失」的连容量都是兜底值；标着「无思考档位」的会被当成不推理的模型 ——
           供应商没公布可选档位，而 dsh 只认「档位」这一种打开推理的写法。
@@ -388,6 +423,14 @@ function XferColumn(props: {
             <span className="xfer-id mono">{it.id}</span>
             <span className="xfer-name muted">{it.name}</span>
             <span className="tag tag-dim">{API_TAG[it.api]}</span>
+            {it.probe !== null && it.probe !== 'ok' ? (
+              <span
+                className={`tag ${PROBE_TAG[it.probe]?.cls ?? 'tag-warn'}`}
+                title={`${PROBE_TAG[it.probe]?.why ?? ''}${it.probeDetail === null ? '' : `\n\n供应商原话：${it.probeDetail}`}`}
+              >
+                {PROBE_TAG[it.probe]?.text ?? it.probe}
+              </span>
+            ) : null}
             {it.kind === 'catalog' ? (
               // 目录自带：完整元数据在 pi-ai 里，这里不复述
               <span className="tag tag-dim">目录自带</span>

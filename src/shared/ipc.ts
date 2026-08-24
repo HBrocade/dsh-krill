@@ -339,6 +339,21 @@ export interface CatalogCandidate {
   compat: Record<string, string | boolean>
   /** models.dev 上有没有这条记录 —— 没有的话容量数字全是兜底值 */
   described: boolean
+  /**
+   * 实测结果 —— 按 dsh 的真实用法（带工具定义）向供应商打过一发。
+   *
+   *   ok          能用
+   *   no-tools    能聊，但带工具就失败。dsh 每次调用都带工具，所以等于不能用
+   *   unavailable 供应商列了它，实际调不通（上游 Unsupported model、preview 期不可用…）
+   *   forbidden   账号没权限，通常要去供应商后台开通
+   *   unknown     探测本身没打通，别据此下结论
+   *
+   * 这一项不能省：`GET /models` 列的是网关知道的型号，不是你现在跑得通的型号。
+   * 实测 opencode-go 线上 29 个里有 5 个用不了。
+   */
+  probe: 'ok' | 'no-tools' | 'unavailable' | 'forbidden' | 'unknown'
+  /** 供应商自己的说法，原样截断；没有则为 null */
+  probeDetail: string | null
 }
 
 /**
@@ -352,6 +367,15 @@ export interface CatalogModelRef {
   id: string
   name: string
   api: CatalogApi
+  /**
+   * 实测结果，含义同 {@link CatalogCandidate.probe}；`null` = 没测过。
+   *
+   * **目录自带的不测**：那份目录是 pi-ai 筛过的（它只收支持 tool calling 的模型），
+   * 而每发探测都要算进供应商限额，为别人已经筛过的东西再烧一遍额度不划算。
+   * **已经补进配置的要测**：那些是我们担保放进去的，出了事得能指出是哪一个。
+   */
+  probe: 'ok' | 'no-tools' | 'unavailable' | 'forbidden' | 'unknown' | null
+  probeDetail: string | null
 }
 
 /** 一条已配置的供应商路线的目录状态。 */

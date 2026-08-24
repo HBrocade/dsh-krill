@@ -150,6 +150,9 @@ function buildCandidate(
     reasonsWithoutLevels: !usable && (dev?.reasons ?? false),
     compat: siblingCompat(siblings, api),
     described: dev !== undefined,
+    // 真值由随后的实测填上；在那之前一律按「还没问过」算，不预设它能用
+    probe: 'unknown',
+    probeDetail: null,
   }
 }
 
@@ -175,7 +178,8 @@ async function inspectRoute(
   const models = installed.readProvider(cat, route.id)
   base.installedCount = models.length
   base.catalog = models
-    .map((m): CatalogModelRef => ({ id: m.id, name: m.name, api: m.api }))
+    // 目录自带的不实测 —— pi-ai 已经筛过一轮，见 CatalogModelRef.probe
+    .map((m): CatalogModelRef => ({ id: m.id, name: m.name, api: m.api, probe: null, probeDetail: null }))
     .sort((a, b) => a.id.localeCompare(b.id))
   // 原路线写了 models: 就以那份清单为准，否则整份目录都在服务
   // —— 后者是唯一能跟随目录更新的状态，别把它物化成一份全量清单
@@ -201,10 +205,30 @@ async function inspectRoute(
 
   const known = new Set(models.map((m) => m.id))
   const already = new Set(declared.map((d) => d.id))
-  base.candidates = listing.ids
+  const candidates = listing.ids
     .filter((id) => !known.has(id) && !already.has(id))
     .map((id) => buildCandidate(id, dev?.models.get(id), models))
     .sort((a, b) => a.id.localeCompare(b.id))
+
+  // 逐个实测。`GET /models` 列的是网关知道的型号，不是现在跑得通的型号 ——
+  // 不问一遍就往列表里放，等于把「聊到一半报 network_error」留给用户去撞。
+  // 已经补进配置的一并测：坏掉的那个往往正是当初补进去的，得能当场指出来。
+  const endpoint = (api: CatalogApi): string | null =>
+    siblingBaseUrl(models, api) ?? fallbackBaseUrl(dev?.api ?? null, api)
+  const targets = [...base.declared, ...candidates].flatMap((m) => {
+    const baseUrl = endpoint(m.api)
+    return baseUrl === null ? [] : [{ model: m.id, api: m.api, baseUrl }]
+  })
+  const verdicts = await sources.probeModels(
+    route.id, targets, readCredential(route.apiKeyEnv), force,
+  )
+  for (const m of [...base.declared, ...candidates]) {
+    const v = verdicts.get(m.id)
+    if (v === undefined) continue
+    m.probe = v.verdict
+    m.probeDetail = v.detail
+  }
+  base.candidates = candidates
   return base
 }
 
@@ -224,7 +248,12 @@ function declaredByRoute(): Map<string, CatalogModelRef[]> {
     for (const entry of r.modelEntries) {
       const id = typeof entry['id'] === 'string' ? entry['id'] : ''
       if (id === '') continue
-      list.push({ id, name: typeof entry['name'] === 'string' ? entry['name'] : id, api })
+      list.push({
+        id,
+        name: typeof entry['name'] === 'string' ? entry['name'] : id,
+        api,
+        probe: null, probeDetail: null,
+      })
     }
     out.set(r.extOf, list)
   }

@@ -150,8 +150,24 @@ MCP shim 仍然可用（`claude mcp add dsh -- node <Krill.app>/Contents/Resourc
 实测 opencode-go：线上 29 个，pi-ai 0.82.1 收 16 个、0.84.2 收 19 个。
 两层都落后，光顶 pi-ai 的版本补不齐。
 
-供应商面板绕过快照：向配了 key 的路线拉 `GET /models` 拿权威的 id 清单，
+供应商面板绕过快照：向配了 key 的路线拉 `GET /models` 拿 id 清单，
 元数据从 [models.dev](https://models.dev) 取，补不到的走兜底值。
+
+**但清单不等于能用，所以每个目录外的模型都实测一发。** `GET /models` 列的是网关
+知道的型号，不是你现在跑得通的型号 —— 实测 opencode-go 线上 29 个里就有：上游回
+`Unsupported model` 的、preview 期 `Model is unavailable` 的、要去后台开通数据政策
+（403 `DataPolicyError`）的，还有一个 `ox-alpha-free`：**不带工具能聊，一带工具就
+503**。而 dsh 是 agent，每次调用都带工具定义，所以「能聊」在这里根本不算能用 ——
+症状是聊到一半来一句 `Provider finish_reason: network_error`，那句话既不指向模型
+也不指向工具，纯靠猜。
+
+所以探测按 dsh 的真实用法（带工具）打一发，失败了再不带工具打一发，用来把
+「不支持工具」和「压根不可用」分开 —— 这两句话在界面上是完全不同的意思。
+结果缓存 6 小时（每发探测都要算进供应商限额），已经补进配置的也一并测，
+坏掉的那个往往正是当初补进去的。
+
+pi-ai 的目录本来就是筛过的（README 写着只收支持 tool calling 的模型），
+我们从线上清单里补模型，就得自己把这道筛子补上。
 
 **全程只写 `settings.yaml`，不碰 node_modules。** 改已装 pi-ai 的目录 JSON 看着更干净，
 但内嵌的那棵树在 `.app/Contents/Resources` 里，签名后改了就坏签名，而且 dsh 一升级
