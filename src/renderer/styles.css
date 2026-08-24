@@ -322,3 +322,38 @@ body {
 .usage-grid > b > i { opacity: .5; font-style: normal; font-size: 11px; }
 .usage-note { font-size: 12px; }
 .usage-foot { font-size: 11px; line-height: 1.6; margin-top: auto; padding-top: 8px; }
+
+/* ── 模型目录 ────────────────────────────────────────────────────────────── */
+/* ── 穿梭框 ──────────────────────────────────────────────────────────────── */
+.xfer-filter { width: 100%; margin-top: 10px; font-size: 12.5px; }
+/* 中间那列按内容宽，两侧等分剩下的 —— 两侧同宽，挪来挪去行不会跳 */
+.xfer { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; margin-top: 10px; align-items: start; }
+.xfer-col { min-width: 0; border: 1px solid var(--line); border-radius: 9px; padding: 9px 10px; }
+.xfer-head { display: flex; justify-content: space-between; font-size: 12.5px; }
+.xfer-hint { font-size: 11px; margin-top: 2px; }
+/* 二三十行时给个上限，免得一条路线把整页顶下去；两侧同高，不会一边长一边短 */
+.xfer-list { margin-top: 7px; height: 300px; overflow-y: auto; }
+.xfer-empty { font-size: 12px; padding: 6px 2px; }
+.xfer-item {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  font: inherit; font-size: 12.5px; color: var(--text); text-align: left;
+  background: transparent; border: 0; border-radius: 5px;
+  padding: 4px 5px; cursor: pointer;
+}
+.xfer-item:hover:not(:disabled) { background: rgba(255,255,255,.05); }
+.xfer-item:disabled { opacity: .5; cursor: default; }
+.xfer-arrow { flex: none; opacity: .35; font-size: 13px; }
+.xfer-id { flex: none; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 名字让位给右边的标签：挤不下先截它，id 和标签都不能省 */
+.xfer-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xfer-cap { flex: none; font-size: 11px; }
+.xfer-mid { display: flex; flex-direction: column; gap: 7px; padding-top: 58px; }
+/* 供应商卡片的折叠头：整行可点，chevron 展开时转 90° */
+.cat-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  font: inherit; font-size: 13px; color: var(--text);
+  background: transparent; border: 0; padding: 0; cursor: pointer; text-align: left;
+}
+.cat-chevron { display: inline-flex; opacity: .5; transition: transform .12s ease; }
+.cat-head.open .cat-chevron { transform: rotate(90deg); }
+.cat-head .spacer { flex: 1; }

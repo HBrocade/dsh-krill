@@ -18,6 +18,7 @@ import { loadConfig, saveConfig } from './config/store.ts'
 import * as envCheck from './env/check.ts'
 import * as usage from './usage/index.ts'
 import * as visionConfig from './vision/config.ts'
+import * as catalog from './catalog/index.ts'
 import { installNode, removeNode } from './env/install-node.ts'
 import type { AppInfo, OpResult, Rect } from '@shared/ipc'
 
@@ -95,6 +96,10 @@ function registerIpc(): void {
   ipcMain.handle('vision:state', () => visionConfig.state())
   ipcMain.handle('vision:setConfig', (_e, next: Parameters<typeof visionConfig.writeConfig>[0]) =>
     guard(async () => { visionConfig.writeConfig(next); return visionConfig.state() }))
+  ipcMain.handle('catalog:state', () => catalog.getReport())
+  ipcMain.handle('catalog:refresh', (_e, a: { force: boolean }) => guard(() => catalog.refresh({ force: a.force })))
+  ipcMain.handle('catalog:apply', (_e, a: { routeId: string; modelIds: string[] }) => guard(() => catalog.apply(a)))
+  ipcMain.handle('catalog:clear', (_e, a: { routeId: string }) => guard(() => catalog.clear(a)))
   ipcMain.handle('usage:state', () => usage.state())
   ipcMain.handle('usage:refresh', () => guard(() => usage.refresh()))
   ipcMain.handle('env:check', () => envCheck.inspect())
@@ -186,6 +191,10 @@ async function main(): Promise<void> {
   })
 
   // 用量：会话切换、或当前会话有新内容落盘时推给界面 —— 右栏据此即时刷新
+  // 模型目录：拿 supervisor 当前用的那份 dsh 去定位 pi-ai —— 内嵌 / 升级副本 /
+  // 用户自己装的三种来源下，目录在哪并不一样，只有 supervisor 知道用的是哪份
+  catalog.bindLocator(() => backend.getStatus().dshBin)
+  catalog.onChange((r) => { getShellContents()?.send('catalog:changed', r) })
   usage.onChanged((r) => { getShellContents()?.send('usage:changed', r) })
   usage.start()
   updates.start()
