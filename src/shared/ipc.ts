@@ -297,6 +297,116 @@ export interface VisionState {
   modelNotVision: boolean
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 模型目录
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** dsh 从 pi-ai 接出来的三种线协议。 */
+export type CatalogApi = 'anthropic-messages' | 'openai-completions' | 'openai-responses'
+
+/**
+ * 一个「供应商线上有、已装目录里没有」的模型。
+ *
+ * 除 id 外的每一项都是**推来的**，不是官方目录记的。所以界面必须让人看见
+ * 每一条的来源，并且能逐个勾选 —— 推错了协议的模型不是少个功能，是发一次请求
+ * 报一次错。
+ */
+export interface CatalogCandidate {
+  id: string
+  name: string
+  api: CatalogApi
+  /**
+   * 协议是怎么定的：
+   *   models-dev —— 按 models.dev 记的 SDK 包名推（拿 pi-ai 对了一遍，19 个里对 15 个）
+   *   route      —— 沿用它已经被写进的那条路线
+   *   fallback   —— models.dev 上也没有这个模型，按网关通用入口当 Chat Completions
+   */
+  apiSource: 'models-dev' | 'route' | 'fallback'
+  contextWindow: number
+  maxTokens: number
+  input: Array<'text' | 'image'>
+  /** 思考档位 → 线上写法；没有可选档位时为 null */
+  reasoningEfforts: Record<string, string | null> | null
+  /**
+   * models.dev 说它会推理，却没给出任何可选档位。
+   *
+   * 这种模型补进来之后会被 dsh 当成不推理的 —— 打开推理的唯一字段
+   * (`reasoningEfforts`) 要求至少一个 off 以外的档位，而我们没有档位可填。
+   * 模型该怎么想还是怎么想，只是选择器上不会有思考档位可调。
+   */
+  reasonsWithoutLevels: boolean
+  /** 从同协议的兄弟条目抄来的 compat 开关 */
+  compat: Record<string, string | boolean>
+  /** models.dev 上有没有这条记录 —— 没有的话容量数字全是兜底值 */
+  described: boolean
+}
+
+/**
+ * 穿梭框里一个**已经存在**的模型 —— 目录自带的，或已经被补进配置的。
+ *
+ * 只带 id / 名字 / 协议：目录自带那些的完整元数据本来就在 pi-ai 里、
+ * 补进去那些的留在 `settings.yaml` 里，两边都已是既成事实，
+ * 再解析一层只是给已经落地的东西重算一次。要推断的细节在 {@link CatalogCandidate}。
+ */
+export interface CatalogModelRef {
+  id: string
+  name: string
+  api: CatalogApi
+}
+
+/** 一条已配置的供应商路线的目录状态。 */
+export interface CatalogRoute {
+  id: string
+  displayName: string
+  /** 配了 key 才去刷；没配的话列出来也选不了 */
+  hasKey: boolean
+  apiKeyEnv: string | null
+  /**
+   * 这条路线在 pi-ai 内置目录里有没有对应的供应商。
+   *
+   * 为 false 是**正常状态**，不是失败：那是用户自己声明的路线（本机 Ollama 之类），
+   * 模型本来就全写在配置里，没有「目录落后」这回事。摘要里必须和「查失败」分开说 ——
+   * 都写成「未查成」的话，用户会去排查一个根本不存在的故障。
+   */
+  inCatalog: boolean
+  /** 已装 pi-ai 目录里这条路线自带的模型 */
+  catalog: CatalogModelRef[]
+  /**
+   * 其中当前真正在服务的。
+   *
+   * 原路线没写 `models:` 时等于 {@link catalog} 全部 —— 那也是**唯一**能跟随
+   * 目录更新的状态。一旦写了清单，这条路线就钉死在清单上了。
+   */
+  catalogKept: string[]
+  /**
+   * 原路线写了 `modelOverrides`。
+   *
+   * 它与 `models` 互斥，所以有它就没法去掉目录里的模型 —— 界面得直说，
+   * 不能等写下去被 dsh 拒了才让人发现。
+   */
+  hasModelOverrides: boolean
+  /** 已装 pi-ai 目录里收了几个 */
+  installedCount: number
+  /** 供应商线上现在有几个 */
+  liveCount: number
+  /** 已经被补进配置的那些（目录外） */
+  declared: CatalogModelRef[]
+  candidates: CatalogCandidate[]
+  /** 这条路线没查成的原因；正常为 null */
+  error: string | null
+}
+
+export interface CatalogReport {
+  checkedAt: number | null
+  checking: boolean
+  /** 定位到 dsh 在用的那份 pi-ai 了吗 */
+  available: boolean
+  /** 已装 pi-ai 版本 —— 用来解释「为什么会缺」 */
+  piAiVersion: string | null
+  routes: CatalogRoute[]
+  error: string | null
+}
+
 export interface UpdateReport {
   checkedAt: number | null
   checking: boolean
@@ -483,6 +593,10 @@ export interface InvokeMap {
   'update:upgradeCli': (args: { confirm: boolean }) => OpResult<string>
   'vision:state': () => VisionState
   'vision:setConfig': (next: VisionConfig) => OpResult<VisionState>
+  'catalog:state': () => CatalogReport
+  'catalog:refresh': (args: { force: boolean }) => OpResult<CatalogReport>
+  'catalog:apply': (args: { routeId: string; modelIds: string[] }) => OpResult<number>
+  'catalog:clear': (args: { routeId: string }) => OpResult<number>
   'usage:state': () => UsageReport
   'usage:refresh': () => OpResult<UsageReport>
   'env:check': () => EnvReport
@@ -515,6 +629,7 @@ export interface EventMap {
   'update:changed': UpdateReport
   'plugins:changed': PluginsState
   'bridge:changed': BridgeStatus
+  'catalog:changed': CatalogReport
   /** 会话切换、或当前会话有新消息落盘时推送 */
   'usage:changed': UsageReport
   /** 主进程要求渲染层切到某个面板（托盘菜单点击等） */
@@ -530,6 +645,7 @@ export const INVOKE_CHANNELS = [
   'update:npmConfig', 'update:setNpmConfig',
   'env:check', 'env:installNode', 'env:removeNode',
   'usage:state', 'usage:refresh',
+  'catalog:state', 'catalog:refresh', 'catalog:apply', 'catalog:clear',
   'vision:state', 'vision:setConfig',
   'update:appDownload', 'update:appInstall',
   'plugins:state', 'plugins:refresh', 'plugins:install', 'plugins:uninstall',
@@ -539,7 +655,7 @@ export const INVOKE_CHANNELS = [
 
 export const EVENT_CHANNELS = [
   'backend:changed', 'log:line', 'update:changed',
-  'plugins:changed', 'bridge:changed', 'nav:goto', 'usage:changed',
+  'plugins:changed', 'bridge:changed', 'nav:goto', 'usage:changed', 'catalog:changed',
 ] as const satisfies ReadonlyArray<keyof EventMap>
 
 /** preload 在 window.dsh 上暴露的形状。 */

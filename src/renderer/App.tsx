@@ -4,6 +4,7 @@ import { Sidebar, type PanelId } from './components/Sidebar.tsx'
 import { LogsPanel } from './panels/LogsPanel.tsx'
 import { UsageColumn } from './panels/UsageColumn.tsx'
 import { UpdatesPanel } from './panels/UpdatesPanel.tsx'
+import { ProvidersPanel } from './panels/ProvidersPanel.tsx'
 import { PluginsPanel } from './panels/PluginsPanel.tsx'
 import { BridgePanel } from './panels/BridgePanel.tsx'
 import { Placeholder } from './panels/Placeholder.tsx'
@@ -61,6 +62,7 @@ export function App(): React.JSX.Element {
           </div>
         ) : null}
         {panel === 'logs' ? <LogsPanel /> : null}
+        {panel === 'providers' ? <ProvidersPanel /> : null}
         {panel === 'updates' ? <UpdatesPanel /> : null}
         {panel === 'plugins' ? <PluginsPanel /> : null}
         {panel === 'bridge' ? <BridgePanel /> : null}

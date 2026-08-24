@@ -2,11 +2,12 @@ import { useState } from 'react'
 import type { BackendStatus } from '@shared/ipc'
 import brandUrl from '../assets/brand.png'
 
-export type PanelId = 'chat' | 'plugins' | 'updates' | 'bridge' | 'logs'
+export type PanelId = 'chat' | 'plugins' | 'providers' | 'updates' | 'bridge' | 'logs'
 
 const ITEMS: Array<{ id: PanelId; label: string; icon: React.JSX.Element }> = [
   { id: 'chat',    label: '会话',    icon: <IconChat /> },
   { id: 'plugins', label: '插件',    icon: <IconPlug /> },
+  { id: 'providers', label: '供应商', icon: <IconProvider /> },
   { id: 'updates', label: '更新',    icon: <IconUp /> },
   { id: 'bridge',  label: '桥接',    icon: <IconBridge /> },
   { id: 'logs',    label: '日志',    icon: <IconLog /> },
@@ -93,6 +94,7 @@ function BrandMark(): React.JSX.Element {
 const S = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.7, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
 function IconChat() { return <svg viewBox="0 0 20 20" {...S}><path d="M4 4h12v9H8l-4 3z" /></svg> }
 function IconPlug() { return <svg viewBox="0 0 20 20" {...S}><path d="M7 3v4M13 3v4M5 7h10v3a5 5 0 01-10 0zM10 15v3" /></svg> }
+function IconProvider() { return <svg viewBox="0 0 20 20" {...S}><path d="M3 6.5C3 5.1 6.1 4 10 4s7 1.1 7 2.5S13.9 9 10 9 3 7.9 3 6.5zM3 6.5v7C3 14.9 6.1 16 10 16s7-1.1 7-2.5v-7M3 10c0 1.4 3.1 2.5 7 2.5s7-1.1 7-2.5" /></svg> }
 function IconUp()   { return <svg viewBox="0 0 20 20" {...S}><path d="M10 16V5M6 9l4-4 4 4M4 17h12" /></svg> }
 function IconBridge(){ return <svg viewBox="0 0 20 20" {...S}><path d="M3 13V9M17 13V9M3 11h14M6 11V7M14 11V7M10 11V5" /></svg> }
 function IconLog()  { return <svg viewBox="0 0 20 20" {...S}><path d="M4 4h12v12H4zM7 8h6M7 11h6M7 14h3" /></svg> }
