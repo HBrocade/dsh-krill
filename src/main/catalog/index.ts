@@ -18,7 +18,7 @@ import { log } from '../backend/log-ring.ts'
 import * as installed from './installed.ts'
 import * as sources from './sources.ts'
 import {
-  API_LABEL, extRouteId, hasCredential, readCredential, readRoutes, writePlan,
+  API_LABEL, extRouteId, hasCredential, readCredential, readOfficialRoute, readRoutes, writePlan,
 } from './settings.ts'
 import type { ExtRoutePlan } from './settings.ts'
 import type {
@@ -380,6 +380,64 @@ export async function clear(args: { routeId: string }): Promise<number> {
   writePlan({ source: args.routeId, sourceModels: null, ext: [] })
   await refresh()
   return before.reduce((n, r) => n + r.modelIds.length, 0)
+}
+
+/**
+ * 一条能拿来直接发 chat completions 的路线 —— 插件检索用的。
+ *
+ * 与 {@link CatalogRoute} 的区别见 ipc.ts 里 DiscoverRoute 的注释。这里只回
+ * OpenAI 兼容的那一面：`/chat/completions` 三家网关都收，而 Anthropic 协议的
+ * 路线要另写一套报文，为了问一句话不值当。
+ */
+export interface ChatRoute {
+  id: string
+  apiKeyEnv: string | null
+  hasKey: boolean
+  baseUrl: string
+  models: string[]
+}
+
+/**
+ * 列出所有推得出 OpenAI 兼容端点的路线。
+ *
+ * baseURL 三种来源，优先级从确凿到推断：配置里写死的 > 已装目录里同路线
+ * openai-completions 条目上的 > 没有就放弃这条路线（宁可不列，也不猜一个
+ * 发出去 404 的地址）。ext 路线一并列出 —— 它们本来就是声明式的、baseURL
+ * 写在配置里，是最稳的那一档。
+ */
+export function chatRoutes(): ChatRoute[] {
+  const cat = installed.locateCatalog(resolveBin())
+  // 官方那条排头：它不在 providers 段里（归 llm-deepseek 独占），
+  // 按 providers 遍历永远遍历不到它 —— 见 settings.ts 的 readOfficialRoute
+  const official = readOfficialRoute()
+  const out: ChatRoute[] = [{
+    id: official.id,
+    apiKeyEnv: official.apiKeyEnv,
+    hasKey: hasCredential(official.apiKeyEnv),
+    baseUrl: official.baseURL,
+    models: official.modelIds,
+  }]
+  for (const route of readRoutes()) {
+    const models = cat === null ? [] : installed.readProvider(cat, route.id)
+    const baseUrl = route.baseURL ?? siblingBaseUrl(models, 'openai-completions')
+    if (baseUrl === null) continue
+    const ids = new Set<string>(route.modelIds)
+    for (const m of models) if (m.api === 'openai-completions') ids.add(m.id)
+    if (ids.size === 0) continue
+    out.push({
+      id: route.id,
+      apiKeyEnv: route.apiKeyEnv,
+      hasKey: hasCredential(route.apiKeyEnv),
+      baseUrl,
+      models: [...ids].sort((a, b) => a.localeCompare(b)),
+    })
+  }
+  return out
+}
+
+/** 取某条路线的票。值只往它自己的供应商发 —— 不落日志、不进 IPC。 */
+export function routeKey(route: ChatRoute): string | null {
+  return readCredential(route.apiKeyEnv)
 }
 
 export { extRouteId }

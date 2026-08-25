@@ -19,6 +19,7 @@ import * as envCheck from './env/check.ts'
 import * as usage from './usage/index.ts'
 import * as visionConfig from './vision/config.ts'
 import * as catalog from './catalog/index.ts'
+import * as discover from './discover/index.ts'
 import { installNode, removeNode } from './env/install-node.ts'
 import type { AppInfo, OpResult, Rect } from '@shared/ipc'
 
@@ -130,6 +131,13 @@ function registerIpc(): void {
     guard(() => plugins.setDisabled(a)))
   ipcMain.handle('plugins:patchDoctor', (_e, a: { fix: boolean }) => guard(() => plugins.patchDoctor(a)))
 
+  ipcMain.handle('discover:state', () => discover.getState())
+  ipcMain.handle('discover:reload', () => guard(() => discover.reload()))
+  ipcMain.handle('discover:search', (_e, a: { routeId: string; model: string; query: string }) =>
+    guard(() => discover.search(a)))
+  ipcMain.handle('discover:remove', (_e, a: { id: string }) => guard(() => discover.remove(a)))
+  ipcMain.handle('discover:openStore', () => guard(() => discover.revealStore()))
+
   ipcMain.handle('bridge:status', () => bridge.status())
   ipcMain.handle('bridge:config', () => loadConfig().bridge)
   ipcMain.handle('bridge:setConfig', (_e, patch: Partial<import('@shared/ipc').BridgeConfig>) =>
@@ -195,6 +203,7 @@ async function main(): Promise<void> {
   // 用户自己装的三种来源下，目录在哪并不一样，只有 supervisor 知道用的是哪份
   catalog.bindLocator(() => backend.getStatus().dshBin)
   catalog.onChange((r) => { getShellContents()?.send('catalog:changed', r) })
+  discover.onChange((s) => { getShellContents()?.send('discover:changed', s) })
   usage.onChanged((r) => { getShellContents()?.send('usage:changed', r) })
   usage.start()
   updates.start()

@@ -200,6 +200,60 @@ export function readCredential(ref: string | null): string | null {
   return credentialFromStore(ref)
 }
 
+/**
+ * dsh 自带的那条官方路线（`deepseek-official`）。
+ *
+ * 它**不在** `llm-pi-ai.providers` 里 —— 那段是 pi-ai 的声明式路线，而官方这条
+ * 归 `llm-deepseek` 插件独占（它自己的 `PROVIDER = "deepseek-official"`）。
+ * 所以按 providers 段列路线时它一条都不会出现，界面上看着就像「不支持官方」。
+ *
+ * 三项都跟着那个插件的解析顺序来：
+ *   apiKeyEnv —— `llm-deepseek.apiKeyEnv`，缺省 `DEEPSEEK_API_KEY`
+ *   baseURL   —— 配置 > `$DEEPSEEK_BASE_URL` > 公网默认 `https://api.deepseek.com`
+ *   models    —— `llm-deepseek.models`，缺省就是插件里那两条
+ * 端点形状也一样（`${baseURL}/chat/completions`），所以拿它发问话不用特殊分支。
+ */
+export interface OfficialRoute {
+  id: string
+  apiKeyEnv: string
+  baseURL: string
+  modelIds: string[]
+}
+
+const OFFICIAL_ID = 'deepseek-official'
+const OFFICIAL_DEFAULT_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
+
+export function readOfficialRoute(): OfficialRoute {
+  const fallback: OfficialRoute = {
+    id: OFFICIAL_ID,
+    apiKeyEnv: 'DEEPSEEK_API_KEY',
+    // 环境变量为空串等于没设 —— 空 baseURL 拼出来的是个发不出去的地址
+    baseURL: asString(process.env['DEEPSEEK_BASE_URL']) ?? 'https://api.deepseek.com',
+    modelIds: [...OFFICIAL_DEFAULT_MODELS],
+  }
+  const path = settingsPath()
+  if (!existsSync(path)) return fallback
+  let section: unknown
+  try {
+    section = parseDocument(readFileSync(path, 'utf8')).toJS() as Record<string, unknown>
+    section = (section as Record<string, unknown>)['llm-deepseek']
+  } catch {
+    // 读不动就用缺省：这条路线的三项全都有插件级默认值，缺配置是常态而非故障
+    return fallback
+  }
+  if (section === null || typeof section !== 'object') return fallback
+  const v = section as Record<string, unknown>
+  const models = (Array.isArray(v['models']) ? v['models'] : [])
+    .map((m) => (m !== null && typeof m === 'object' ? asString((m as Record<string, unknown>)['id']) : null))
+    .filter((s): s is string => s !== null)
+  return {
+    id: OFFICIAL_ID,
+    apiKeyEnv: asString(v['apiKeyEnv']) ?? fallback.apiKeyEnv,
+    baseURL: asString(v['baseURL']) ?? fallback.baseURL,
+    modelIds: models.length > 0 ? models : fallback.modelIds,
+  }
+}
+
 /** 写入前先备份。settings.yaml 里还有凭据引用与模型默认值，写坏了 dsh 起不来。 */
 function backup(path: string): void {
   if (existsSync(path)) copyFileSync(path, `${path}.bak-catalog-${String(Date.now())}`)
