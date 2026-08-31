@@ -1,9 +1,12 @@
 /**
  * 后端子进程主管：spawn `dsh --profile web --port 0`，看住它的一生。
  *
- * 语义沿用旧版（那部分是对的）：stdout 解析就绪 URL → HTTP 200 轮询 →
+ * 语义沿用旧版（那部分是对的）：stdout 解析就绪 URL → HTTP 轮询 →
  * 退出时 SIGTERM → 宽限 → SIGKILL。这里做的是结构化、类型化，并把状态
  * 变化广播出去供界面与托盘订阅。
+ *
+ * 解析与判定见 `ready-url.ts`：就绪 URL 必须连 token query 一起截，
+ * 轮询要认 2xx/3xx —— 少任何一样都会卡成「界面永远空白」。
  *
  * 一个刻意的改动：崩溃重启不再弹模态对话框打断用户，改为自动重启并把
  * 情况写进状态与日志 —— 弹窗会挡住正在看的内容，而重启本身是可自愈的。
@@ -12,6 +15,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { request } from 'node:http'
 import { locateDsh, webProfileFlags, type LocatedDsh } from './locate.ts'
+import { parseReadyUrl, isReadyStatus } from './ready-url.ts'
 import { log } from './log-ring.ts'
 import type { BackendStatus, BackendPhase } from '@shared/ipc'
 
@@ -50,12 +54,12 @@ function phase(p: BackendPhase, message: string | null = null): void {
   setStatus({ phase: p, message })
 }
 
-/** 探一次 URL 是否已 200。失败一律 resolve(false)，不抛。 */
+/** 探一次 URL 是否已就绪。失败一律 resolve(false)，不抛。 */
 function probe(url: string, timeoutMs = 2_000): Promise<boolean> {
   return new Promise((resolve) => {
     const req = request(url, { method: 'GET' }, (res) => {
       res.resume()
-      resolve(res.statusCode === 200)
+      resolve(isReadyStatus(res.statusCode))
     })
     req.on('error', () => resolve(false))
     req.setTimeout(timeoutMs, () => { req.destroy(); resolve(false) })
@@ -131,10 +135,10 @@ export async function start(): Promise<string> {
       createInterface({ input: proc.stdout }).on('line', (line) => {
         remember(line)
         log(line, 'stdout')
-        const m = /https?:\/\/127\.0\.0\.1:(\d+)/.exec(line)
-        if (m !== null && urlSeen === null) {
-          urlSeen = m[0]
-          waitReady(m[0], deadline).then(() => finish(null, m[0]!)).catch((e: Error) => finish(e))
+        const ready = parseReadyUrl(line)
+        if (ready !== null && urlSeen === null) {
+          urlSeen = ready
+          waitReady(ready, deadline).then(() => finish(null, ready)).catch((e: Error) => finish(e))
         }
       })
     }
