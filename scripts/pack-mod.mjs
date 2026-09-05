@@ -48,7 +48,13 @@ if (typeof patchPath === 'string') {
     } catch (e) {
       problems.push(`${patchPath} 解析失败：${e.message}`)
     }
-    if (rows.length === 0) problems.push(`${patchPath} 里没有任何 insert 行`)
+    // 纯补丁 / 纯路线的 mod 没有 loader 行是正常的 —— 它靠 krill.corePatches 或
+    // krill.routes 起作用，dsh.bundle.patch 只是为了让 dsh plugin add 把它登进 bundles
+    const doesSomethingElse = (pkg.krill?.corePatches?.length ?? 0) > 0
+      || Object.keys(pkg.krill?.routes ?? {}).length > 0
+    if (rows.length === 0 && !doesSomethingElse) {
+      problems.push(`${patchPath} 里没有任何 insert 行，也没有代码级补丁或路线声明 —— 装上去什么都不做`)
+    }
     for (const r of rows) {
       if (typeof r?.name !== 'string') continue
       if (/\/client$/.test(r.name)) {
@@ -107,6 +113,37 @@ for (const c of corePatches) {
 }
 if (corePatches.length > 0) {
   notes.push(`代码级补丁 ${corePatches.length} 处：${corePatches.map((c) => c.package).join('、')}`)
+}
+
+// ── 5. 路线声明 ─────────────────────────────────────────────────────────────
+// 装的时候原样写进 settings.yaml，写错一个字段整条路线被 dsh 拒掉，而那是重启之后
+// 才看得到的事。这里只查形状上一眼能看出来的：协议、端点、凭据引用、模型清单、头。
+const routes = pkg.krill?.routes
+if (routes !== undefined) {
+  if (routes === null || typeof routes !== 'object' || Array.isArray(routes)) {
+    problems.push('krill.routes 必须是 id → 路线体 的字典（不是数组）')
+  } else {
+    let modelCount = 0
+    for (const [id, r] of Object.entries(routes)) {
+      if (r === null || typeof r !== 'object') { problems.push(`路线 ${id} 不是对象`); continue }
+      if (typeof r.api !== 'string') problems.push(`路线 ${id} 缺 api（anthropic-messages / openai-completions / openai-responses）`)
+      if (typeof r.baseURL !== 'string' || !/^https?:\/\//.test(r.baseURL)) problems.push(`路线 ${id} 的 baseURL 不是 http(s) 地址`)
+      if (typeof r.apiKeyEnv !== 'string') problems.push(`路线 ${id} 缺 apiKeyEnv —— 用户没地方填 key`)
+      const models = Array.isArray(r.models) ? r.models : []
+      if (models.length === 0) problems.push(`路线 ${id} 没有 models —— 自声明路线的模型只能来自清单`)
+      for (const m of models) {
+        if (typeof m?.id !== 'string') problems.push(`路线 ${id} 有模型条目缺 id`)
+      }
+      modelCount += models.length
+      if (r.headers !== undefined) {
+        const bad = Object.entries(r.headers ?? {}).filter(([, v]) => typeof v !== 'string')
+        if (r.headers === null || typeof r.headers !== 'object' || bad.length > 0) {
+          problems.push(`路线 ${id} 的 headers 必须是字符串到字符串的字典`)
+        }
+      }
+    }
+    notes.push(`路线声明 ${Object.keys(routes).length} 条（${modelCount} 个模型）：${Object.keys(routes).join('、')}`)
+  }
 }
 
 // ── 报告 ────────────────────────────────────────────────────────────────────

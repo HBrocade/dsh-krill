@@ -77,6 +77,11 @@ export interface RouteConfig {
   /** 路线级 api；只有声明式路线才有 */
   api: string | null
   baseURL: string | null
+  /**
+   * 路线级请求头。拉模型列表时要一并带上 —— 有的网关按 User-Agent 放行，
+   * 不带就 401，面板会把一条好路线报成「查失败」。
+   */
+  headers: Record<string, string>
   /** 配置里显式列出的模型 id —— 这些不算「缺」 */
   modelIds: string[]
   /**
@@ -124,11 +129,17 @@ export function readRoutes(): RouteConfig[] {
     const models = (Array.isArray(v['models']) ? v['models'] : [])
       .filter((m): m is Record<string, unknown> => m !== null && typeof m === 'object')
     const idx = id.indexOf(EXT_MARK)
+    const rawHeaders = v['headers']
+    const headers = rawHeaders !== null && typeof rawHeaders === 'object' && !Array.isArray(rawHeaders)
+      ? Object.fromEntries(Object.entries(rawHeaders as Record<string, unknown>)
+        .filter((e): e is [string, string] => typeof e[1] === 'string'))
+      : {}
     return {
       id,
       apiKeyEnv: asString(v['apiKeyEnv']),
       api: asString(v['api']),
       baseURL: asString(v['baseURL']),
+      headers,
       modelIds: models.map((m) => asString(m['id'])).filter((s): s is string => s !== null),
       modelEntries: models,
       hasModelOverrides: v['modelOverrides'] !== null && typeof v['modelOverrides'] === 'object',
@@ -200,6 +211,60 @@ export function readCredential(ref: string | null): string | null {
   return credentialFromStore(ref)
 }
 
+/**
+ * dsh 自带的那条官方路线（`deepseek-official`）。
+ *
+ * 它**不在** `llm-pi-ai.providers` 里 —— 那段是 pi-ai 的声明式路线，而官方这条
+ * 归 `llm-deepseek` 插件独占（它自己的 `PROVIDER = "deepseek-official"`）。
+ * 所以按 providers 段列路线时它一条都不会出现，界面上看着就像「不支持官方」。
+ *
+ * 三项都跟着那个插件的解析顺序来：
+ *   apiKeyEnv —— `llm-deepseek.apiKeyEnv`，缺省 `DEEPSEEK_API_KEY`
+ *   baseURL   —— 配置 > `$DEEPSEEK_BASE_URL` > 公网默认 `https://api.deepseek.com`
+ *   models    —— `llm-deepseek.models`，缺省就是插件里那两条
+ * 端点形状也一样（`${baseURL}/chat/completions`），所以拿它发问话不用特殊分支。
+ */
+export interface OfficialRoute {
+  id: string
+  apiKeyEnv: string
+  baseURL: string
+  modelIds: string[]
+}
+
+const OFFICIAL_ID = 'deepseek-official'
+const OFFICIAL_DEFAULT_MODELS = ['deepseek-v4-flash', 'deepseek-v4-pro']
+
+export function readOfficialRoute(): OfficialRoute {
+  const fallback: OfficialRoute = {
+    id: OFFICIAL_ID,
+    apiKeyEnv: 'DEEPSEEK_API_KEY',
+    // 环境变量为空串等于没设 —— 空 baseURL 拼出来的是个发不出去的地址
+    baseURL: asString(process.env['DEEPSEEK_BASE_URL']) ?? 'https://api.deepseek.com',
+    modelIds: [...OFFICIAL_DEFAULT_MODELS],
+  }
+  const path = settingsPath()
+  if (!existsSync(path)) return fallback
+  let section: unknown
+  try {
+    section = parseDocument(readFileSync(path, 'utf8')).toJS() as Record<string, unknown>
+    section = (section as Record<string, unknown>)['llm-deepseek']
+  } catch {
+    // 读不动就用缺省：这条路线的三项全都有插件级默认值，缺配置是常态而非故障
+    return fallback
+  }
+  if (section === null || typeof section !== 'object') return fallback
+  const v = section as Record<string, unknown>
+  const models = (Array.isArray(v['models']) ? v['models'] : [])
+    .map((m) => (m !== null && typeof m === 'object' ? asString((m as Record<string, unknown>)['id']) : null))
+    .filter((s): s is string => s !== null)
+  return {
+    id: OFFICIAL_ID,
+    apiKeyEnv: asString(v['apiKeyEnv']) ?? fallback.apiKeyEnv,
+    baseURL: asString(v['baseURL']) ?? fallback.baseURL,
+    modelIds: models.length > 0 ? models : fallback.modelIds,
+  }
+}
+
 /** 写入前先备份。settings.yaml 里还有凭据引用与模型默认值，写坏了 dsh 起不来。 */
 function backup(path: string): void {
   if (existsSync(path)) copyFileSync(path, `${path}.bak-catalog-${String(Date.now())}`)
@@ -211,6 +276,11 @@ export interface ExtRoutePlan {
   displayName: string
   baseURL: string
   apiKeyEnv: string
+  /**
+   * 从源路线原样带过去的请求头。自定义路线接的网关可能按 User-Agent 放行，
+   * ext 路线不带就是一条永远 401 的路线。没有就不写这个键。
+   */
+  headers?: Readonly<Record<string, string>>
   /** 已经序列化好的 models 条目 —— 见 {@link RouteConfig.modelEntries} */
   models: Array<Record<string, unknown>>
 }
@@ -228,18 +298,20 @@ export interface WritePlan {
   /** 源路线 id —— 同时决定清理哪些旧 ext 路线 */
   source: string
   /**
-   * 写给**原路线**的 `models:` 列表；`null` = 删掉这个键。
+   * 写给**原路线**的 `models:` 列表；`null` = 删掉这个键；`'keep'` = 一个字节不碰。
    *
-   * 删键而不是写全量清单，是为了让「一个都没去掉」的路线继续跟随目录更新。
+   * 删键而不是写全量清单，是为了让「一个都没去掉」的目录路线继续跟随目录更新。
+   * 自定义路线没有目录可跟随，它的 `models:` 是用户手写的全部，删了键整条路线
+   * 就没模型了 —— 所以自定义路线只准传数组或 `'keep'`，由调用方保证。
    * 空数组这里不接受 —— 它会被 dsh 读成「没写」，恢复整份目录，
    * 与调用方的意图正好相反，所以在 {@link writePlan} 里直接抛。
    */
-  sourceModels: Array<Record<string, unknown>> | null
+  sourceModels: Array<Record<string, unknown>> | null | 'keep'
   ext: readonly ExtRoutePlan[]
 }
 
 export function writePlan(plan: WritePlan): { kept: number; added: number } {
-  if (plan.sourceModels !== null && plan.sourceModels.length === 0) {
+  if (Array.isArray(plan.sourceModels) && plan.sourceModels.length === 0) {
     throw new Error('保留清单不能为空：空的 models 会被读成「没写」，反而恢复整份目录')
   }
   const path = settingsPath()
@@ -264,6 +336,7 @@ export function writePlan(plan: WritePlan): { kept: number; added: number } {
       api: p.api,
       baseURL: p.baseURL,
       apiKeyEnv: p.apiKeyEnv,
+      ...(p.headers !== undefined && Object.keys(p.headers).length > 0 ? { headers: { ...p.headers } } : {}),
       models: p.models,
     })
     added += p.models.length
@@ -271,7 +344,9 @@ export function writePlan(plan: WritePlan): { kept: number; added: number } {
   }
 
   const modelsPath = ['llm-pi-ai', 'providers', plan.source, 'models']
-  if (plan.sourceModels === null) {
+  if (plan.sourceModels === 'keep') {
+    // 自定义路线：它的 models 是用户手写的全部，这里不碰
+  } else if (plan.sourceModels === null) {
     if (doc.hasIn(modelsPath)) {
       doc.deleteIn(modelsPath)
       log(`模型目录：${plan.source} 恢复为服务整份目录（删掉 models 清单）`)
@@ -282,7 +357,7 @@ export function writePlan(plan: WritePlan): { kept: number; added: number } {
   }
 
   writeFileSync(path, doc.toString(), 'utf8')
-  return { kept: plan.sourceModels?.length ?? 0, added }
+  return { kept: Array.isArray(plan.sourceModels) ? plan.sourceModels.length : 0, added }
 }
 
 export { API_LABEL }

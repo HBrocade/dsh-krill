@@ -319,9 +319,10 @@ export interface CatalogCandidate {
    * 协议是怎么定的：
    *   models-dev —— 按 models.dev 记的 SDK 包名推（拿 pi-ai 对了一遍，19 个里对 15 个）
    *   route      —— 沿用它已经被写进的那条路线
+   *   family     —— 自定义路线上按模型名族推（`claude-*` → Anthropic），网关级 SDK 名太笼统时用
    *   fallback   —— models.dev 上也没有这个模型，按网关通用入口当 Chat Completions
    */
-  apiSource: 'models-dev' | 'route' | 'fallback'
+  apiSource: 'models-dev' | 'route' | 'fallback' | 'family'
   contextWindow: number
   maxTokens: number
   input: Array<'text' | 'image'>
@@ -511,6 +512,68 @@ export interface InstallOutcome {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// 插件检索
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * 一条可以拿来问话的供应商路线。
+ *
+ * 和 {@link CatalogRoute} 不是一回事：那边关心「目录里缺哪些模型」，
+ * 这边只关心「能不能往它发一次 chat completions」—— 所以要 baseUrl 推得出来、
+ * 模型列得出来，缺 key 的也列（本机 Ollama 那种路线本来就不要票，
+ * 有 key 才带票，没有就匿名发）。
+ */
+export interface DiscoverRoute {
+  id: string
+  displayName: string
+  hasKey: boolean
+  /** 可选模型 id：配置里写死的 + 已装目录里那条路线自带的 */
+  models: string[]
+}
+
+/** 模型在一次检索里给出的一个插件。全部字段都出自模型，**没有一项被核实过**。 */
+export interface DiscoverHit {
+  /** 包名。模型可能编造 —— 界面必须让人能核对而不是直接装 */
+  name: string
+  summary: string
+  /** 建议的安装 spec（通常就是包名）；模型没给为 null */
+  install: string | null
+  homepage: string | null
+  /** 模型自报的把握。low 的那些多半是它拼出来的名字 */
+  confidence: 'high' | 'medium' | 'low'
+  note: string | null
+}
+
+/** 一次检索的存档。落在桌面端自己的 userData 里，不进 ~/.dsh。 */
+export interface DiscoverRecord {
+  id: string
+  ts: number
+  query: string
+  routeId: string
+  model: string
+  hits: DiscoverHit[]
+  /**
+   * 模型回的原文。
+   *
+   * 一直留着：结构化解析是按约定的 JSON 抠的，模型不按约定回时 {@link hits}
+   * 会是空的，那时原文是**唯一**还能看的东西 —— 也是「复制」真正复制的内容。
+   */
+  raw: string
+  /** 这条检索失败的原因（网络、鉴权、模型拒答）；正常为 null */
+  error: string | null
+}
+
+export interface DiscoverState {
+  routes: DiscoverRoute[]
+  /** 本地已保存的检索，新的在前 */
+  records: DiscoverRecord[]
+  searching: boolean
+  /** 存档文件路径，面板上要显示「存在哪儿」 */
+  storePath: string
+  error: string | null
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // 对外桥接接口
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -615,6 +678,12 @@ export interface InvokeMap {
   'plugins:setDisabled': (args: { name: string; disabled: boolean }) => OpResult<string>
   'plugins:patchDoctor': (args: { fix: boolean }) => OpResult<PatchHealth>
 
+  'discover:state': () => DiscoverState
+  'discover:reload': () => OpResult<DiscoverState>
+  'discover:search': (args: { routeId: string; model: string; query: string }) => OpResult<DiscoverRecord>
+  'discover:remove': (args: { id: string }) => OpResult<DiscoverState>
+  'discover:openStore': () => OpResult
+
 
   'bridge:status': () => BridgeStatus
   'bridge:config': () => BridgeConfig
@@ -630,6 +699,7 @@ export interface EventMap {
   'plugins:changed': PluginsState
   'bridge:changed': BridgeStatus
   'catalog:changed': CatalogReport
+  'discover:changed': DiscoverState
   /** 会话切换、或当前会话有新消息落盘时推送 */
   'usage:changed': UsageReport
   /** 主进程要求渲染层切到某个面板（托盘菜单点击等） */
@@ -650,12 +720,14 @@ export const INVOKE_CHANNELS = [
   'update:appDownload', 'update:appInstall',
   'plugins:state', 'plugins:refresh', 'plugins:install', 'plugins:uninstall',
   'plugins:setDisabled', 'plugins:patchDoctor',
+  'discover:state', 'discover:reload', 'discover:search', 'discover:remove', 'discover:openStore',
   'bridge:status', 'bridge:config', 'bridge:setConfig', 'bridge:rotateToken',
 ] as const satisfies ReadonlyArray<keyof InvokeMap>
 
 export const EVENT_CHANNELS = [
   'backend:changed', 'log:line', 'update:changed',
   'plugins:changed', 'bridge:changed', 'nav:goto', 'usage:changed', 'catalog:changed',
+  'discover:changed',
 ] as const satisfies ReadonlyArray<keyof EventMap>
 
 /** preload 在 window.dsh 上暴露的形状。 */

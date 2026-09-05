@@ -18,13 +18,15 @@ import {
 } from 'node:fs'
 import { join, basename, dirname, isAbsolute, resolve as resolvePath } from 'node:path'
 import { homedir, tmpdir } from 'node:os'
-import { stringify, parse as parseYaml } from 'yaml'
+import { stringify } from 'yaml'
 import { locateDsh } from '../backend/locate.ts'
 import { log } from '../backend/log-ring.ts'
 import { profilesRoot, readManifest } from '../update/plugins.ts'
 import * as injector from './injector.ts'
 import * as patch from './patch.ts'
 import * as corePatch from './core-patch.ts'
+import * as routes from './routes.ts'
+import { bundleInsertIds } from './patch-orphans.ts'
 import { desktopPluginsRoot } from './inventory.ts'
 
 /** 本地别名，避免和 inventory 的导出在下面混用时看不清来源 */
@@ -455,6 +457,10 @@ export async function install(
   // pnpm 会重写 profile 的 node_modules，先链会被它抹掉
   linkPackSubPackages(profile, dir, onOutput)
 
+  // 插件声明的路线写进 settings.yaml。放在通道安装之后：通道装失败就不该留下半套配置。
+  // 同名路线已存在时不覆盖（可能是用户改过的），apply 会在输出里说明。
+  routes.apply(dir, onOutput)
+
   const steps = await verifyRecognition(name, dir, profile, args.channel)
   const recognized = steps.every((s) => s.ok || s.skipped)
   log(`安装收尾识别闭环：${recognized ? '全部通过' : '有步骤未通过'}`)
@@ -618,6 +624,23 @@ export async function uninstall(
     } catch (e) {
       steps.push({ label: '代码级补丁', detail: e instanceof Error ? e.message : String(e), ok: false })
     }
+    // 路线声明同理：插件走了，它写进 settings.yaml 的路线也该走，
+    // 否则模型选择器里留着几条永远 401 的路线
+    try {
+      const gone = routes.revert(d, onOutput)
+      const removed = gone.filter((r) => r.detail.startsWith('已'))
+      steps.push({
+        label: '路线声明',
+        detail: gone.length === 0
+          ? '该插件没有声明路线'
+          : removed.length === 0
+            ? '声明的路线本来就不在 settings.yaml 里'
+            : `已从 settings.yaml 移除 ${removed.map((r) => r.id).join('、')}`,
+        ok: gone.every((r) => r.ok),
+      })
+    } catch (e) {
+      steps.push({ label: '路线声明', detail: e instanceof Error ? e.message : String(e), ok: false })
+    }
   }
 
   for (const [label, fn] of [
@@ -660,23 +683,7 @@ function bundleEntryIds(pluginDir: string): string[] {
   } catch { return [] }
 
   try {
-    const raw = readFileSync(join(pluginDir, patchRel), 'utf8')
-    const doc = parseYaml(raw) as unknown
-    if (!Array.isArray(doc)) return []
-    const ids: string[] = []
-    for (const layer of doc) {
-      if (layer === null || typeof layer !== 'object') continue
-      const l = layer as { id?: unknown; insert?: unknown }
-      if (typeof l.id === 'string') ids.push(l.id)
-      if (Array.isArray(l.insert)) {
-        for (const e of l.insert) {
-          if (e !== null && typeof e === 'object' && typeof (e as { id?: unknown }).id === 'string') {
-            ids.push((e as { id: string }).id)
-          }
-        }
-      }
-    }
-    return ids
+    return bundleInsertIds(readFileSync(join(pluginDir, patchRel), 'utf8'))
   } catch { return [] }
 }
 

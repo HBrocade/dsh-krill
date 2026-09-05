@@ -357,3 +357,61 @@ body {
 .cat-chevron { display: inline-flex; opacity: .5; transition: transform .12s ease; }
 .cat-head.open .cat-chevron { transform: rotate(90deg); }
 .cat-head .spacer { flex: 1; }
+
+/* ── 插件检索轨道 ────────────────────────────────────────────────────────── */
+/* 插件面板是「左边一列内容 + 右边一条轨道」，所以要多一层横向容器 */
+.panel-row { flex: 1; min-height: 0; display: flex; }
+.panel-row > .panel { min-width: 0; }
+
+/* 行为与左侧栏那条轨道一致：默认收窄，点一下展开，宽度做过渡 */
+.side-rail {
+  width: 440px; flex: 0 0 440px; max-width: 46%;
+  transition: width .14s ease, flex-basis .14s ease;
+  background: var(--bg-sunken); border-left: 1px solid var(--line);
+  display: flex; flex-direction: column; min-height: 0;
+}
+.side-rail.rail { width: 46px; flex-basis: 46px; }
+
+/* 收起态：整条轨道就是那个按钮，竖排标题 —— 窄轨里横排一个字都放不下 */
+.side-rail-tab {
+  flex: 1; width: 100%; padding: 18px 0 14px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+  background: none; border: 0; color: var(--text-dim);
+  font: inherit; cursor: pointer;
+}
+.side-rail-tab:hover { background: #141A25; color: var(--text); }
+.side-rail-label {
+  writing-mode: vertical-rl; letter-spacing: .22em;
+  font-size: 12px; white-space: nowrap;
+}
+.side-rail-tab .tag-dim { margin: 0; }
+
+.side-rail-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 26px 14px 10px; border-bottom: 1px solid var(--line-soft);
+}
+.side-rail-body {
+  flex: 1; min-height: 0; overflow: auto;
+  padding: 12px 14px 24px; user-select: text;
+}
+
+.dsc-q-input { width: 100%; resize: vertical; line-height: 1.5; }
+.dsc-row { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.dsc-row > .input:first-child { flex: 1; min-width: 0; }
+.dsc-row .select { max-width: 148px; }
+.dsc-sep { height: 1px; background: var(--line-soft); margin: 14px 0 2px; }
+.dsc-list { margin-top: 4px; }
+.dsc-rec { border-top: 1px solid var(--line-soft); padding: 10px 0; }
+.dsc-rec:first-child { border-top: 0; }
+.dsc-q { font-size: 12.5px; line-height: 1.5; word-break: break-word; }
+.dsc-hit { margin-top: 8px; padding-left: 10px; border-left: 2px solid var(--line); }
+.dsc-hit .mono { word-break: break-all; }
+.dsc-link { display: block; color: var(--steel); text-decoration: none; word-break: break-all; }
+.dsc-link:hover { text-decoration: underline; }
+.dsc-raw {
+  margin: 6px 0 8px; padding: 8px 10px; border-radius: 7px;
+  /* 轨道底色就是 sunken，原文块得比它亮一档才看得出边界 */
+  background: var(--bg-raise); border: 1px solid var(--line-soft);
+  font: 11px/1.6 "SF Mono", ui-monospace, Menlo, monospace;
+  white-space: pre-wrap; word-break: break-word; max-height: 220px; overflow: auto;
+}

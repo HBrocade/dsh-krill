@@ -18,8 +18,8 @@
     "smoke": "electron-vite build && electron . --smoke-test",
     "icons": "node scripts/gen-icons.mjs",
     "embed": "node --experimental-strip-types scripts/embed-dsh.mjs",
-    "pack": "npm run build && electron-builder --dir",
-    "dist": "npm run build && electron-builder",
+    "pack": "find dist -name .DS_Store -delete 2>/dev/null; npm run build && electron-builder --dir",
+    "dist": "find dist -name .DS_Store -delete 2>/dev/null; npm run build && electron-builder",
     "pack-mod": "node scripts/pack-mod.mjs"
   },
   "dependencies": {

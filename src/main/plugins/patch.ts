@@ -14,8 +14,9 @@
 import { readFileSync, writeFileSync, existsSync, copyFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { parse, parseDocument, stringify } from 'yaml'
-import { profilesRoot } from '../update/plugins.ts'
+import { profilesRoot, readManifest } from '../update/plugins.ts'
 import { log } from '../backend/log-ring.ts'
+import { bundleInsertIds, orphanDisabledIds } from './patch-orphans.ts'
 import type { PatchHealth } from '@shared/ipc'
 
 /** patch 文件里的一条 loader 条目。字段远不止这些，未知字段原样保留。 */
@@ -118,12 +119,42 @@ export function inspect(profile: string): PatchHealth {
     seen.add(id)
   }
 
-  const orphans = entries
-    .filter((e) => e.disabled === true && typeof e.id === 'string')
-    .map((e) => e.id as string)
-    .filter((id) => !packageExists(profile, id))
+  // disabled 行的 id 可能是包名，也可能是某个已装 bundle 自己 insert 的 loader id
+  //（vision pack 插的是 `vision` / `ui-vision`）。只看包名会把后者全判成孤儿，
+  // 一键修复就把用户的停用抹掉 —— 2026-09-05 这样崩过一次后端。
+  const declared = declaredBundleIds(profile)
+  const orphans = orphanDisabledIds(entries, (id) => packageExists(profile, id), declared)
 
-  return { ...base, duplicateIds: [...dup], orphanDisabled: [...new Set(orphans)] }
+  return { ...base, duplicateIds: [...dup], orphanDisabled: orphans }
+}
+
+/**
+ * profile 里每个已装 bundle 在自己 patch 文件里 insert 的 loader id 全集。
+ *
+ * 读的是 manifest 的 `dsh.profile.bundles`（官方回填的那份），每个 bundle 从 profile 的
+ * node_modules 解析；没有 `dsh.bundle.patch` 的不是 bundle，跳过。任何一步读不动都当作
+ * 没声明 —— 后果只是多判一个孤儿候选，而调用方对孤儿的处理本来就要备份。
+ */
+function declaredBundleIds(profile: string): Set<string> {
+  const ids = new Set<string>()
+  const manifest = readManifest(profile)
+  if (manifest === null) return ids
+  for (const name of manifest.bundles) {
+    const dir = join(profilesRoot(), profile, 'node_modules', ...name.split('/'))
+    let patchRel: string
+    try {
+      const pkg = JSON.parse(readFileSync(join(dir, 'package.json'), 'utf8')) as {
+        dsh?: { bundle?: { patch?: unknown } }
+      }
+      const p = pkg.dsh?.bundle?.patch
+      if (typeof p !== 'string' || p === '') continue
+      patchRel = p
+    } catch { continue }
+    try {
+      for (const id of bundleInsertIds(readFileSync(join(dir, patchRel), 'utf8'))) ids.add(id)
+    } catch { /* 读不到就当没声明 */ }
+  }
+  return ids
 }
 
 /**

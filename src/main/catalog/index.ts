@@ -18,9 +18,10 @@ import { log } from '../backend/log-ring.ts'
 import * as installed from './installed.ts'
 import * as sources from './sources.ts'
 import {
-  API_LABEL, extRouteId, hasCredential, readCredential, readRoutes, writePlan,
+  API_LABEL, extRouteId, hasCredential, readCredential, readOfficialRoute, readRoutes, writePlan,
 } from './settings.ts'
-import type { ExtRoutePlan } from './settings.ts'
+import { defaultCompat, extBaseUrlFor, inferApi, listingBaseFor } from './infer.ts'
+import type { ExtRoutePlan, RouteConfig } from './settings.ts'
 import type {
   CatalogApi, CatalogCandidate, CatalogModelRef, CatalogReport, CatalogRoute,
 } from '@shared/ipc'
@@ -125,12 +126,34 @@ function fallbackBaseUrl(devApi: string | null, api: CatalogApi): string | null 
   return api === 'anthropic-messages' ? devApi.replace(/\/v1\/?$/, '') : devApi
 }
 
+/**
+ * 自定义路线自己声明的模型，装成目录条目的形状 —— 兄弟 compat / 协议归组那套逻辑
+ * 就能原样复用。它们对这条路线而言就是「目录」：用户手写的全部。
+ */
+function ownModels(route: RouteConfig): installed.InstalledModel[] {
+  const api = knownApi(route.api)
+  return route.modelEntries.flatMap((e): installed.InstalledModel[] => {
+    const id = typeof e['id'] === 'string' ? e['id'] : ''
+    if (id === '') return []
+    const compat = e['compat'] !== null && typeof e['compat'] === 'object'
+      ? (e['compat'] as Record<string, unknown>)
+      : {}
+    return [{ id, name: typeof e['name'] === 'string' ? e['name'] : id, api, baseUrl: route.baseURL ?? '', compat }]
+  })
+}
+
 function buildCandidate(
   id: string,
   dev: sources.DevModel | undefined,
   siblings: readonly installed.InstalledModel[],
+  custom: boolean,
 ): CatalogCandidate {
-  const api = sources.apiFromNpm(dev?.npm ?? null)
+  // 目录路线按 models.dev 的 SDK 名推；自定义路线多一层族名规则（claude-* → Anthropic），
+  // 因为网关级的 SDK 名多半是笼统的 openai-compatible
+  const inferred = custom
+    ? inferApi(id, dev?.npm ?? null)
+    : { api: sources.apiFromNpm(dev?.npm ?? null), source: dev === undefined ? 'fallback' as const : 'models-dev' as const }
+  const api = inferred.api
   const efforts: Record<string, string | null> = {}
   for (const level of dev?.efforts ?? []) {
     if (LEVELS.includes(level)) efforts[level] = level
@@ -138,17 +161,20 @@ function buildCandidate(
   // 只有 off 一档等于没档位，dsh 会直接拒掉；这种情况当作「不推理」
   const usable = Object.keys(efforts).some((l) => l !== 'off')
   const input = (dev?.input ?? ['text']).filter((m): m is 'text' | 'image' => m === 'text' || m === 'image')
+  // compat 优先抄同协议的兄弟条目；自定义路线上没有兄弟可抄时套协议模板，
+  // 目录路线则宁可不带（目录里本来就该有兄弟，没有说明这个协议在这条路线上是新的）
+  const sibling = siblingCompat(siblings, api)
   return {
     id,
     name: dev?.name ?? id,
     api,
-    apiSource: dev === undefined ? 'fallback' : 'models-dev',
+    apiSource: inferred.source,
     contextWindow: dev?.contextWindow ?? FALLBACK_CONTEXT,
     maxTokens: dev?.maxTokens ?? FALLBACK_MAX_TOKENS,
     input: input.length > 0 ? input : ['text'],
     reasoningEfforts: usable ? efforts : null,
     reasonsWithoutLevels: !usable && (dev?.reasons ?? false),
-    compat: siblingCompat(siblings, api),
+    compat: custom && Object.keys(sibling).length === 0 ? defaultCompat(id, api) : sibling,
     described: dev !== undefined,
   }
 }
@@ -172,7 +198,9 @@ async function inspectRoute(
   }
   if (!base.hasKey) return base
 
-  const models = installed.readProvider(cat, route.id)
+  // 自定义路线没有目录，它手写的 models 就是它的「目录」
+  const custom = !base.inCatalog
+  const models = custom ? ownModels(route) : installed.readProvider(cat, route.id)
   base.installedCount = models.length
   base.catalog = models
     .map((m): CatalogModelRef => ({ id: m.id, name: m.name, api: m.api }))
@@ -183,19 +211,29 @@ async function inspectRoute(
     ? route.modelIds.filter((id) => models.some((m) => m.id === id))
     : base.catalog.map((m) => m.id)
 
-  // 目录里没有这个供应商 = 用户自己声明的路线（本地 Ollama 之类），
-  // 它的模型本来就全写在配置里，没有「目录落后」这回事
-  if (!base.inCatalog) return base
-
-  const dev = await sources.modelsDev(route.id, force).catch(() => null)
-  const listingBase = siblingBaseUrl(models, 'openai-completions')
-    ?? fallbackBaseUrl(dev?.api ?? null, 'openai-completions')
-  if (listingBase === null) {
-    base.error = '找不到可以拉列表的 OpenAI 兼容端点'
-    return base
+  // 拉线上列表用哪个端点、元数据去哪查，两类路线来源不同：
+  //   目录路线 —— 端点抄目录里 Chat 协议兄弟的，models.dev 按供应商 id 查；
+  //   自定义路线 —— 端点从它自己的 baseURL 推（补 /v1），models.dev 先按 id 再按主机名找。
+  let listingBase: string | null
+  let dev: sources.DevProvider | null
+  if (custom) {
+    if (route.baseURL === null) {
+      base.error = '自定义路线没有 baseURL，无从拉线上列表'
+      return base
+    }
+    listingBase = listingBaseFor(route.baseURL)
+    dev = await sources.modelsDevFor(route.id, route.baseURL, force).catch(() => null)
+  } else {
+    dev = await sources.modelsDev(route.id, force).catch(() => null)
+    listingBase = siblingBaseUrl(models, 'openai-completions')
+      ?? fallbackBaseUrl(dev?.api ?? null, 'openai-completions')
+    if (listingBase === null) {
+      base.error = '找不到可以拉列表的 OpenAI 兼容端点'
+      return base
+    }
   }
 
-  const listing = await sources.listLive(listingBase, readCredential(route.apiKeyEnv))
+  const listing = await sources.listLive(listingBase, readCredential(route.apiKeyEnv), route.headers)
   if (listing.error !== null) { base.error = listing.error; return base }
   base.liveCount = listing.ids.length
 
@@ -203,7 +241,7 @@ async function inspectRoute(
   const already = new Set(declared.map((d) => d.id))
   base.candidates = listing.ids
     .filter((id) => !known.has(id) && !already.has(id))
-    .map((id) => buildCandidate(id, dev?.models.get(id), models))
+    .map((id) => buildCandidate(id, dev?.models.get(id), models, custom))
     .sort((a, b) => a.id.localeCompare(b.id))
   return base
 }
@@ -304,16 +342,18 @@ export async function apply(args: { routeId: string; modelIds: string[] }): Prom
 
   const cat = installed.locateCatalog(resolveBin())
   if (cat === null) throw new Error('定位不到 dsh 用的那份 pi-ai')
-  const models = installed.readProvider(cat, args.routeId)
+  const custom = !installed.hasProvider(cat, args.routeId)
+  if (custom && route.baseURL === null) throw new Error(`自定义路线 ${args.routeId} 没有 baseURL，推不出拆分路线该用的端点`)
+  const models = custom ? ownModels(route) : installed.readProvider(cat, args.routeId)
   const catalogIds = new Set(models.map((m) => m.id))
 
   const wanted = new Set(args.modelIds)
   const keptCatalog = models.map((m) => m.id).filter((id) => wanted.has(id))
   if (catalogIds.size > 0 && keptCatalog.length === 0) {
-    throw new Error(
-      `${args.routeId} 至少得留一个目录自带的模型：dsh 把空的 models 读成「没写」，`
-      + '写下去反而会恢复整份目录 —— 与你的意图正相反',
-    )
+    throw new Error(custom
+      ? `${args.routeId} 至少得留一个自己声明的模型：自定义路线的模型只能来自它的 models 清单，清空等于整条路线没模型`
+      : `${args.routeId} 至少得留一个目录自带的模型：dsh 把空的 models 读成「没写」，`
+        + '写下去反而会恢复整份目录 —— 与你的意图正相反')
   }
   if (keptCatalog.length < catalogIds.size && route.hasModelOverrides) {
     throw new Error(
@@ -321,14 +361,17 @@ export async function apply(args: { routeId: string; modelIds: string[] }): Prom
       + '两者同时存在会让 dsh 拒掉整条路线。先把 modelOverrides 挪成 models 条目上的字段',
     )
   }
-  // 全留着就把 models 键删掉：写一份全量清单等于把这条路线钉死在今天的目录上
-  const sourceModels = keptCatalog.length === catalogIds.size
-    ? null
-    : keptCatalog.map((id) => {
-      // 用户手写过的条目原样留着（可能带 maxTokens 之类的自定义），其余只写 id
-      const own = route.modelEntries.find((e) => e['id'] === id)
-      return own ?? { id }
-    })
+  const sourceList = keptCatalog.map((id) => {
+    // 用户手写过的条目原样留着（可能带 maxTokens 之类的自定义），其余只写 id
+    const own = route.modelEntries.find((e) => e['id'] === id)
+    return own ?? { id }
+  })
+  // 目录路线全留着就把 models 键删掉：写一份全量清单等于把这条路线钉死在今天的目录上。
+  // 自定义路线永远写数组：它的 models 是手写的全部，删键就是删光。
+  const sourceModels = custom || keptCatalog.length < catalogIds.size ? sourceList : null
+  // 自定义路线上，和它同协议的新模型直接进它自己的 models（路线级 api 对整条生效），
+  // 不用另开一条同协议的拆分路线
+  const sourceApi = knownApi(route.api)
 
   const grouped = new Map<CatalogApi, Array<Record<string, unknown>>>()
   const push = (api: CatalogApi, entry: Record<string, unknown>): void => {
@@ -348,21 +391,27 @@ export async function apply(args: { routeId: string; modelIds: string[] }): Prom
   for (const c of report.routes.find((r) => r.id === args.routeId)?.candidates ?? []) {
     if (!wanted.has(c.id) || seen.has(c.id) || catalogIds.has(c.id)) continue
     seen.add(c.id)
-    push(c.api, toEntry(c))
+    if (custom && c.api === sourceApi) sourceList.push(toEntry(c))
+    else push(c.api, toEntry(c))
   }
 
   const ext: ExtRoutePlan[] = []
   for (const [api, list] of grouped) {
-    const baseURL = siblingBaseUrl(models, api)
+    // 目录路线抄同协议兄弟的端点；自定义路线从自己的 baseURL 推（Anthropic 不带 /v1，其余带）
+    const baseURL = custom ? extBaseUrlFor(route.baseURL ?? '', api) : siblingBaseUrl(models, api)
     if (baseURL === null) {
       throw new Error(`路线 ${args.routeId} 的目录里没有 ${api} 协议的模型，推不出该用哪个 baseURL`)
     }
     ext.push({
       source: args.routeId,
       api,
-      displayName: `${args.routeId}（目录外·${API_LABEL[api]}）`,
+      displayName: custom
+        ? `${args.routeId}（${API_LABEL[api]} 协议）`
+        : `${args.routeId}（目录外·${API_LABEL[api]}）`,
       baseURL,
       apiKeyEnv: route.apiKeyEnv,
+      // 网关按 User-Agent 放行的话，拆出去的路线不带同样的头就是一条永远 401 的路线
+      ...(Object.keys(route.headers).length > 0 ? { headers: route.headers } : {}),
       models: list,
     })
   }
@@ -371,15 +420,79 @@ export async function apply(args: { routeId: string; modelIds: string[] }): Prom
   // 等复查跑完再返回：界面拿到的提示语和随后推过去的报告出自同一次读盘，
   // 不会出现「提示说写了 15 个、列表还是写之前的样子」
   await refresh()
-  return keptCatalog.length + added
+  return (custom ? sourceList.length : keptCatalog.length) + added
 }
 
-/** 撤回这条路线上的一切改动：ext 路线删掉，目录恢复成全量服务。 */
+/**
+ * 撤回这条路线上的一切改动：ext 路线删掉；目录路线恢复成全量服务，
+ * 自定义路线的 models 不碰 —— 那是用户手写的全部，删键等于删光。
+ */
 export async function clear(args: { routeId: string }): Promise<number> {
+  const cat = installed.locateCatalog(resolveBin())
+  // 定位不到目录时也按自定义处理：'keep' 永远不会删掉任何东西
+  const custom = cat === null || !installed.hasProvider(cat, args.routeId)
   const before = readRoutes().filter((r) => r.extOf === args.routeId)
-  writePlan({ source: args.routeId, sourceModels: null, ext: [] })
+  writePlan({ source: args.routeId, sourceModels: custom ? 'keep' : null, ext: [] })
   await refresh()
   return before.reduce((n, r) => n + r.modelIds.length, 0)
+}
+
+/**
+ * 一条能拿来直接发 chat completions 的路线 —— 插件检索用的。
+ *
+ * 与 {@link CatalogRoute} 的区别见 ipc.ts 里 DiscoverRoute 的注释。这里只回
+ * OpenAI 兼容的那一面：`/chat/completions` 三家网关都收，而 Anthropic 协议的
+ * 路线要另写一套报文，为了问一句话不值当。
+ */
+export interface ChatRoute {
+  id: string
+  apiKeyEnv: string | null
+  hasKey: boolean
+  baseUrl: string
+  models: string[]
+}
+
+/**
+ * 列出所有推得出 OpenAI 兼容端点的路线。
+ *
+ * baseURL 三种来源，优先级从确凿到推断：配置里写死的 > 已装目录里同路线
+ * openai-completions 条目上的 > 没有就放弃这条路线（宁可不列，也不猜一个
+ * 发出去 404 的地址）。ext 路线一并列出 —— 它们本来就是声明式的、baseURL
+ * 写在配置里，是最稳的那一档。
+ */
+export function chatRoutes(): ChatRoute[] {
+  const cat = installed.locateCatalog(resolveBin())
+  // 官方那条排头：它不在 providers 段里（归 llm-deepseek 独占），
+  // 按 providers 遍历永远遍历不到它 —— 见 settings.ts 的 readOfficialRoute
+  const official = readOfficialRoute()
+  const out: ChatRoute[] = [{
+    id: official.id,
+    apiKeyEnv: official.apiKeyEnv,
+    hasKey: hasCredential(official.apiKeyEnv),
+    baseUrl: official.baseURL,
+    models: official.modelIds,
+  }]
+  for (const route of readRoutes()) {
+    const models = cat === null ? [] : installed.readProvider(cat, route.id)
+    const baseUrl = route.baseURL ?? siblingBaseUrl(models, 'openai-completions')
+    if (baseUrl === null) continue
+    const ids = new Set<string>(route.modelIds)
+    for (const m of models) if (m.api === 'openai-completions') ids.add(m.id)
+    if (ids.size === 0) continue
+    out.push({
+      id: route.id,
+      apiKeyEnv: route.apiKeyEnv,
+      hasKey: hasCredential(route.apiKeyEnv),
+      baseUrl,
+      models: [...ids].sort((a, b) => a.localeCompare(b)),
+    })
+  }
+  return out
+}
+
+/** 取某条路线的票。值只往它自己的供应商发 —— 不落日志、不进 IPC。 */
+export function routeKey(route: ChatRoute): string | null {
+  return readCredential(route.apiKeyEnv)
 }
 
 export { extRouteId }
