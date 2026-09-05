@@ -24,3 +24,5 @@ PLAN.md
 *.log
 .DS_Store
 .openrouter-key
+# 仓库根目录临时放的 API key 明文，仓库是公开的，绝不能进版本库
+key
