@@ -319,9 +319,10 @@ export interface CatalogCandidate {
    * 协议是怎么定的：
    *   models-dev —— 按 models.dev 记的 SDK 包名推（拿 pi-ai 对了一遍，19 个里对 15 个）
    *   route      —— 沿用它已经被写进的那条路线
+   *   family     —— 自定义路线上按模型名族推（`claude-*` → Anthropic），网关级 SDK 名太笼统时用
    *   fallback   —— models.dev 上也没有这个模型，按网关通用入口当 Chat Completions
    */
-  apiSource: 'models-dev' | 'route' | 'fallback'
+  apiSource: 'models-dev' | 'route' | 'fallback' | 'family'
   contextWindow: number
   maxTokens: number
   input: Array<'text' | 'image'>

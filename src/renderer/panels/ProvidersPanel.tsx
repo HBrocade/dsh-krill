@@ -198,7 +198,9 @@ export function ProvidersPanel(): React.JSX.Element {
               <span className="spacer" />
               <span className="muted">
                 {!route.inCatalog
-                  ? '自定义路线'
+                  ? (route.error === null
+                    ? <>自定义 · 已声明 {route.installedCount}{' · 线上 '}{route.liveCount}</>
+                    : '自定义 · 未查成')
                   : route.error === null
                     ? <>目录 {route.installedCount}
                       {dropped > 0 ? `（在用 ${String(route.catalogKept.length)}）` : ''}
@@ -214,20 +216,23 @@ export function ProvidersPanel(): React.JSX.Element {
               <>
                 {!route.inCatalog ? (
                   <div className="muted hint">
-                    不在 pi-ai 内置目录里 —— 这是你自己声明的路线，模型本来就全写在
-                    <code>settings.yaml</code> 里，没有「目录落后」这回事。
+                    不在 pi-ai 内置目录里 —— 这是你自己声明的路线，「已声明」就是它
+                    <code>models:</code> 里手写的那些。线上多出来的按协议落地：和这条路线
+                    <b>同协议</b>的直接加进它的 <code>models:</code>，其余各开一条
+                    「<code>{route.id}--ext-…</code>」路线，key 与请求头原样带过去。
+                    协议是<b>推断</b>的（看每行的标签），推错了就是发一次请求报一次错，勾之前看一眼。
                   </div>
                 ) : null}
 
-                {route.inCatalog && route.error !== null
+                {route.error !== null
                   ? <div className="muted hint">{route.error}</div>
                   : null}
 
-                {route.inCatalog && route.error === null && items.length === 0 ? (
+                {route.error === null && items.length === 0 ? (
                   <div className="muted hint">目录已经跟上线上，没有要补的。</div>
                 ) : null}
 
-                {route.inCatalog && route.error === null && items.length > 0 ? (
+                {route.error === null && items.length > 0 ? (
                   <>
                     <input
                       className="input xfer-filter"
@@ -401,6 +406,9 @@ function XferColumn(props: {
                 {it.detail.reasoningEfforts !== null ? <span className="tag tag-dim">思考</span> : null}
                 {it.detail.reasonsWithoutLevels ? <span className="tag tag-warn">无思考档位</span> : null}
                 {!it.detail.described ? <span className="tag tag-warn">元数据缺失</span> : null}
+                {/* 协议不是从目录抄来的就得说清楚是怎么推的：推错协议是发一次报一次错 */}
+                {it.detail.apiSource === 'family' ? <span className="tag tag-warn">协议按名族推断</span> : null}
+                {it.detail.apiSource === 'fallback' ? <span className="tag tag-warn">协议兜底</span> : null}
               </>
             )}
             {side === 'left' ? <span className="xfer-arrow" aria-hidden>&rsaquo;</span> : null}

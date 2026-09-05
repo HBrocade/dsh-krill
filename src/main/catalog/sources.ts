@@ -15,6 +15,7 @@
 import { app } from 'electron'
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { providerIdForHost } from './infer.ts'
 import type { CatalogApi } from '@shared/ipc'
 
 const MODELS_DEV = 'https://models.dev/api.json'
@@ -33,10 +34,15 @@ export interface Listing {
  * 先匿名试。opencode zen 的 `/models` 是公开的，匿名能拿到全量；被拒了再带票重试。
  * 顺序反过来的话，每查一次列表就要读一次密钥，而大多数情况根本用不上。
  */
-export async function listLive(baseUrl: string, apiKey: string | null): Promise<Listing> {
+export async function listLive(
+  baseUrl: string,
+  apiKey: string | null,
+  headers: Readonly<Record<string, string>> = {},
+): Promise<Listing> {
   const url = `${baseUrl.replace(/\/+$/, '')}/models`
+  // 路线级 headers 两次尝试都带：按 User-Agent 放行的网关匿名也要看它
   const attempt = async (key: string | null): Promise<Response> => fetch(url, {
-    headers: key === null ? {} : { authorization: `Bearer ${key}` },
+    headers: { ...headers, ...(key === null ? {} : { authorization: `Bearer ${key}` }) },
     signal: AbortSignal.timeout(15_000),
   })
   try {
@@ -158,6 +164,16 @@ export async function modelsDev(provider: string, force = false): Promise<DevPro
     })
   }
   return { api: strOrNull(rec['api']), npm: strOrNull(rec['npm']), models }
+}
+
+/**
+ * 自定义路线的 models.dev 记录：路线 id 对不上就按 baseURL 的主机名找。
+ * 谁都对不上返回 null —— 那这条路线的候选只能靠兜底值与族名推断。
+ */
+export async function modelsDevFor(routeId: string, baseURL: string | null, force = false): Promise<DevProvider | null> {
+  const all = await rawModelsDev(force)
+  const id = providerIdForHost(all, routeId, baseURL ?? '')
+  return id === null ? null : modelsDev(id, force)
 }
 
 /**
