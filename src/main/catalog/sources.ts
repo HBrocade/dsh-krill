@@ -273,8 +273,14 @@ function probeUrl(baseUrl: string, api: CatalogApi): string {
   return `${root}/chat/completions`
 }
 
-function probeHeaders(api: CatalogApi, apiKey: string | null): Record<string, string> {
-  const h: Record<string, string> = { 'content-type': 'application/json' }
+function probeHeaders(
+  api: CatalogApi,
+  apiKey: string | null,
+  extra: Readonly<Record<string, string>>,
+): Record<string, string> {
+  // 路线级 headers 垫底、鉴权盖在上面，跟 listLive 一个次序：按 User-Agent 放行的网关
+  // 不带它就一律 403，探测会把整条路线的模型都判成「没权限」
+  const h: Record<string, string> = { ...extra, 'content-type': 'application/json' }
   if (apiKey === null) return h
   // Anthropic 协议认 x-api-key，不认 Authorization；版本头缺了会 400
   if (api === 'anthropic-messages') {
@@ -309,9 +315,12 @@ function errorMessage(text: string): string | null {
  * 我们这边的网络问题不该让一个好模型背锅。
  */
 export async function probeModel(
-  args: { baseUrl: string; api: CatalogApi; model: string; apiKey: string | null },
+  args: {
+    baseUrl: string; api: CatalogApi; model: string; apiKey: string | null
+    headers?: Readonly<Record<string, string>>
+  },
 ): Promise<ProbeResult> {
-  return probeOnce(args)
+  return probeOnce({ ...args, headers: args.headers ?? {} })
 }
 
 /**
@@ -325,6 +334,7 @@ export async function probeModels(
   items: ReadonlyArray<{ baseUrl: string; api: CatalogApi; model: string }>,
   apiKey: string | null,
   force: boolean,
+  headers: Readonly<Record<string, string>> = {},
 ): Promise<Map<string, ProbeResult>> {
   const cache = force ? {} : readProbeCache()
   const out = new Map<string, ProbeResult>()
@@ -342,7 +352,7 @@ export async function probeModels(
     for (;;) {
       const it = queue.shift()
       if (it === undefined) return
-      const r = await probeOnce({ ...it, apiKey })
+      const r = await probeOnce({ ...it, apiKey, headers })
       out.set(it.model, r)
       cache[`${provider}/${it.model}`] = { at: Date.now(), verdict: r.verdict, detail: r.detail }
     }
@@ -353,12 +363,15 @@ export async function probeModels(
 }
 
 async function probeOnce(
-  args: { baseUrl: string; api: CatalogApi; model: string; apiKey: string | null },
+  args: {
+    baseUrl: string; api: CatalogApi; model: string; apiKey: string | null
+    headers: Readonly<Record<string, string>>
+  },
 ): Promise<ProbeResult> {
   const send = async (withTools: boolean): Promise<{ ok: boolean; status: number; body: string }> => {
     const res = await fetch(probeUrl(args.baseUrl, args.api), {
       method: 'POST',
-      headers: probeHeaders(args.api, args.apiKey),
+      headers: probeHeaders(args.api, args.apiKey, args.headers),
       body: JSON.stringify(probeBody(args.api, args.model, withTools)),
       signal: AbortSignal.timeout(45_000),
     })

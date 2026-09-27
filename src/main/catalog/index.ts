@@ -258,7 +258,7 @@ async function inspectRoute(
     return baseUrl === null ? [] : [{ model: m.id, api: m.api, baseUrl }]
   })
   const verdicts = await sources.probeModels(
-    route.id, targets, readCredential(route.apiKeyEnv), force,
+    route.id, targets, readCredential(route.apiKeyEnv), force, route.headers,
   )
   for (const m of [...base.declared, ...candidates]) {
     const v = verdicts.get(m.id)
