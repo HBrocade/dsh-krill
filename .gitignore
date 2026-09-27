@@ -21,6 +21,9 @@ packs/
 # 实施计划，本地文档不入库
 PLAN.md
 
+# 测试脚本只在本地跑，不入库
+tests/
+
 *.log
 .DS_Store
 .openrouter-key
