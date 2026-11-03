@@ -37,7 +37,7 @@ import { log } from '../backend/log-ring.ts'
 import type { CatalogApi } from '@shared/ipc'
 
 /** dsh 家目录。`DSH_HOME` 优先 —— 与 dsh 自己的解析顺序保持一致。 */
-function dshHome(): string {
+export function dshHome(): string {
   const fromEnv = process.env.DSH_HOME
   return fromEnv !== undefined && fromEnv !== '' ? fromEnv : join(homedir(), '.dsh')
 }

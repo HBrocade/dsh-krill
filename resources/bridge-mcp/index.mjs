@@ -65,7 +65,7 @@ const TOOLS = [
     description:
       '把一个问题交给 DeepSeek Harness（dsh）跑一次一次性任务，返回它的回答。'
       + '用于获取来自另一个模型的独立意见。任务在本机执行，可指定工作目录。'
-      + '模型与凭据取自用户的 dsh 全局配置，与其聊天时所用的完全一致，无需也无法指定。',
+      + '模型与凭据跟着用户在 dsh 里聊天时所用的那套走，无需也无法指定。',
     inputSchema: {
       type: 'object',
       properties: {

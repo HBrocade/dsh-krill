@@ -649,7 +649,7 @@ export interface BridgeStatus {
   lastError: string | null
   /** 给 Claude Code 的接入命令，面板一键复制 */
   mcpCommand: string
-  /** 当前在用的模型描述 —— 与聊天共用同一份全局配置，调用方无需指定 */
+  /** 当前在用的模型描述 —— 取自聊天用的 web profile，桥接任务跟着它走，调用方无需指定 */
   model: string
   /** 固定不变的运行参数，仅供面板只读展示 */
   limits: { timeoutMs: number; maxConcurrent: number }

@@ -199,7 +199,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       name: 'Krill bridge',
       purpose: '把 DeepSeek Harness（dsh）当作第二意见来源：换一个模型、换一个角度看同一件事。',
       dshVersion: currentVersion(),
-      // 模型与凭据都取自 ~/.dsh 全局配置 —— 和用户此刻聊天用的完全一致，
+      // 模型与凭据都跟着聊天 profile 走（见 headless-overlay.ts）——
       // 调用方不需要、也不能指定
       model: { provider: m.provider, name: m.model, reasoningEffort: m.reasoningEffort },
       auth: cfg.requireToken
@@ -299,7 +299,11 @@ export function status(): BridgeStatus {
     // 命令里**不带**端口和 token：端口每次启动都变、token 可轮换，
     // 焊进 --env 的注册第二天就失效，而失效的表现是「连不上／超时」。
     // shim 每次调用自己读发现文件，重启换端口也不用重新注册。
-    mcpCommand: `claude mcp add dsh -- node ${join(process.resourcesPath ?? '<Krill.app>/Contents/Resources', 'bridge-mcp', 'index.mjs')}`,
+    // 开发模式下 resourcesPath 是 Electron 自己的包，shim 在项目的 resources/ 里 —— 与 locate.ts 同一套规则
+    mcpCommand: `claude mcp add dsh -- node "${join(
+      app.isPackaged ? process.resourcesPath : join(app.getAppPath(), 'resources'),
+      'bridge-mcp', 'index.mjs',
+    )}"`,
     model: currentModel.describe(),
     limits: { timeoutMs: defaultTimeoutMs(), maxConcurrent: MAX_CONCURRENT },
   }

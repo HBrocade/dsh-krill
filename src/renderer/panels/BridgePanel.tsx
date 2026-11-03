@@ -72,10 +72,10 @@ export function BridgePanel(): React.JSX.Element {
           </button>
         </div>
         <div className="muted hint">
-          零配置：端口由系统分配，模型与凭据取自 <span className="mono">~/.dsh</span> 全局配置
-          （和你聊天用的同一份），token 自动生成并嵌进下面的接入命令。
+          零配置：模型与凭据跟着聊天走 —— 每次任务把聊天 profile 的模型路由交给 headless，
+          并打开凭据库与平台登录，API key 和账号登录都能用。
           <br />
-          <b>默认关闭</b>。启用后只绑 <span className="mono">127.0.0.1</span>、强制 Bearer token、
+          <b>默认关闭</b>。启用后只绑 <span className="mono">127.0.0.1</span>、拒绝浏览器来源的请求、
           单任务超时 {Math.round(st.limits.timeoutMs / 1000)} 秒、并发上限 {st.limits.maxConcurrent}。
         </div>
         {st.lastError !== null ? <div className="err-line">{st.lastError}</div> : null}
@@ -103,8 +103,8 @@ export function BridgePanel(): React.JSX.Element {
               </span>
             </div>
             <div className="muted hint">
-              命令里的 <span className="mono">&lt;Krill.app&gt;</span> 需替换成实际安装路径；
-              开发模式下 shim 在项目的 <span className="mono">resources/bridge-mcp/index.mjs</span>。
+              路径指向当前运行的这份 Krill（开发模式下是项目里的
+              <span className="mono">resources/bridge-mcp/index.mjs</span>），换了安装位置要重新注册。
               token 默认打码，是为了截图或投屏时不把它一起带出去。
             </div>
           </>

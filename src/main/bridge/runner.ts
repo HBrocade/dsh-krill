@@ -9,6 +9,7 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { existsSync, statSync } from 'node:fs'
 import { locateDsh } from '../backend/locate.ts'
 import { log } from '../backend/log-ring.ts'
+import { writeOverlay } from './headless-overlay.ts'
 
 export interface RunRequest {
   prompt: string
@@ -71,7 +72,8 @@ export function run(req: RunRequest, allowedRoots: readonly string[]): Promise<R
   // 固定用 headless —— 一次性任务只有它合适，不做成可配置项徒增调用方负担
   const profile = 'headless'
   const timeoutMs = req.timeoutMs ?? 300_000
-  const argv = [located.bin, '--profile', profile, task]
+  // 凭据与模型跟着聊天走，见 headless-overlay.ts
+  const argv = [located.bin, '--profile', profile, '--patch', writeOverlay(), task]
   const started = Date.now()
 
   log(`桥接任务开始：profile=${profile} cwd=${cwd} 长度=${task.length}`)
