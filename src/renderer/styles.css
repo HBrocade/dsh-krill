@@ -15,7 +15,8 @@
   --ok:        #34D399;
   --sidebar-w: 208px;
   --sidebar-rail: 88px;
-  --topbar-h:  44px;
+  /* 红绿灯 y=18、底边 31，中线 24.5；顶栏 48 高，文字中线 24，与灯对齐 */
+  --topbar-h:  48px;
   font-synthesis: none;
   -webkit-font-smoothing: antialiased;
 }
@@ -110,8 +111,6 @@ body {
 
 /* ── 主区 ───────────────────────────────────────────────────────────────── */
 .main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-/* 会话页：SPA 落位区 + 右侧用量栏并排。.main 本身是纵向的，这一层负责转横 */
-.chat-row { flex: 1; min-height: 0; display: flex; }
 /* SPA 的落位区：这个 div 只负责量尺寸，真正的内容是主进程挂上来的 WebContentsView */
 .app-slot { flex: 1; min-width: 0; min-height: 0; }
 
@@ -139,7 +138,7 @@ body {
 /* ── 日志 ───────────────────────────────────────────────────────────────── */
 .log-view {
   background: var(--bg-sunken); border: 1px solid var(--line-soft); border-radius: 10px;
-  padding: 10px 12px; height: calc(100vh - 190px); overflow: auto;
+  padding: 10px 12px; height: calc(100vh - 190px - var(--topbar-h)); overflow: auto;
   font: 11.5px/1.65 "SF Mono", ui-monospace, Menlo, monospace;
   white-space: pre-wrap; word-break: break-all;
 }
@@ -280,28 +279,72 @@ body {
 .patch-row { display: flex; gap: 9px; padding: 6px 0 6px 4px; }
 .patch-row .mono { font-size: 11.5px; }
 
-/* ── 会话页右侧用量栏 ───────────────────────────────────────────── */
-.usage-col {
-  width: 232px; flex: none; display: flex; flex-direction: column; gap: 10px;
-  padding: 12px 12px 14px; overflow-y: auto;
-  border-left: 1px solid var(--line); background: var(--bg);
+/* ── 主区顶栏：拖窗口的把手 + 用量 ─────────────────────────────── */
+/* 与左轨同底色，两条拼成一个 L 形的外框；SPA 嵌在框里 */
+.topbar {
+  flex: none;
+  background: var(--bg-sunken); border-bottom: 1px solid var(--line);
+  -webkit-app-region: drag;
 }
-.usage-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.topbar-row {
+  height: var(--topbar-h);
+  display: flex; align-items: center; gap: 14px;
+  padding: 0 12px 0 16px;
+  font-size: 12px; white-space: nowrap;
+}
+/* drag 区里的元素收不到鼠标：能点的、带 title 提示的都得单独挖出来 */
+.topbar button, .tb-delta, .tb-err, .topbar-detail { -webkit-app-region: no-drag; }
+.topbar-row > .spacer { align-self: stretch; }
+
+/* 会话合计是纯文字，留在 drag 区里 —— 窄窗口下它先被截，右边的钱不让位 */
+.tb-session { display: flex; align-items: baseline; gap: 12px; min-width: 0; overflow: hidden; }
+.tb-label { color: var(--text-faint); }
+.tb-model {
+  max-width: 180px; overflow: hidden; text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tb-kv { color: var(--text-faint); }
+.tb-kv > b, .tb-delta > b, .tb-balance > b {
+  margin-left: 5px; font-weight: 500; color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.tb-toggle {
+  flex: none; display: flex; align-items: center; gap: 4px;
+  height: 24px; padding: 0 8px; border-radius: 6px;
+  background: none; border: 1px solid transparent; color: var(--text-faint);
+  font: inherit; cursor: pointer;
+}
+.tb-toggle:hover { background: #10141D; border-color: var(--line-soft); color: var(--text); }
+.tb-toggle svg { transition: transform .12s ease; }
+.topbar.open .tb-toggle { color: var(--text); }
+.topbar.open .tb-toggle svg { transform: rotate(180deg); }
+
+.topbar-row > :not(.tb-session):not(.spacer) { flex: none; }
+.tb-delta { color: var(--text-faint); cursor: help; }
+.tb-balance {
+  display: flex; align-items: baseline; gap: 0;
+  padding: 3px 8px; border-radius: 6px; border: 0; background: none;
+  font: inherit; color: inherit; cursor: pointer;
+}
+.tb-balance:hover { background: #10141D; }
+.tb-balance > b { font-size: 13px; }
+.tb-bad { margin-left: 8px; color: var(--danger); }
+.tb-err { max-width: 260px; overflow: hidden; text-overflow: ellipsis; color: #FCA5A5; }
+
+.topbar-detail {
+  display: flex; flex-wrap: wrap; align-items: flex-start; gap: 10px;
+  padding: 0 12px 12px 16px; max-height: 40vh; overflow-y: auto;
+  user-select: text;
+}
+.tb-card { width: 232px; flex: none; }
+.tb-notes {
+  flex: 1; min-width: 240px; max-width: 520px;
+  font-size: 11.5px; line-height: 1.7; color: var(--text-faint);
+}
+.tb-notes-lead { color: var(--text-dim); margin-bottom: 2px; }
+
 .btn-sm { padding: 3px 9px; font-size: 12px; }
 .usage-card { border: 1px solid var(--line); border-radius: 9px; padding: 10px 11px; }
-.usage-card-title {
-  font-size: 12px; opacity: .75; margin-bottom: 8px;
-  display: flex; align-items: baseline; justify-content: space-between;
-}
-.usage-empty { font-size: 12px; }
-.usage-balance {
-  font-size: 20px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  cursor: pointer; display: flex; align-items: baseline; gap: 8px;
-}
-.usage-hint { font-size: 11px; opacity: .45; font-style: normal; font-family: inherit; }
-.usage-delta { margin-top: 5px; font-size: 12px; opacity: .8; }
-.usage-delta > i { display: block; font-size: 11px; opacity: .55; font-style: normal; }
-.usage-model + .usage-model { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); }
 .usage-model-name {
   font-size: 12px; margin-bottom: 6px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -309,7 +352,6 @@ body {
 }
 .usage-provider { display: block; font-size: 10.5px; opacity: .45; font-style: normal; }
 .usage-thirdparty { opacity: .55; }
-.usage-official { margin-top: 7px; font-size: 11.5px; opacity: .7; line-height: 1.5; }
 .usage-grid {
   display: grid; grid-template-columns: auto 1fr; gap: 3px 10px;
   font-size: 12px; align-items: baseline;
@@ -320,8 +362,6 @@ body {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .usage-grid > b > i { opacity: .5; font-style: normal; font-size: 11px; }
-.usage-note { font-size: 12px; }
-.usage-foot { font-size: 11px; line-height: 1.6; margin-top: auto; padding-top: 8px; }
 
 /* ── 模型目录 ────────────────────────────────────────────────────────────── */
 /* ── 穿梭框 ──────────────────────────────────────────────────────────────── */

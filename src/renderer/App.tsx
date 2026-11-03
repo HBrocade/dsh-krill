@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { BackendStatus } from '@shared/ipc'
 import { Sidebar, type PanelId } from './components/Sidebar.tsx'
 import { LogsPanel } from './panels/LogsPanel.tsx'
-import { UsageColumn } from './panels/UsageColumn.tsx'
+import { UsageBar } from './panels/UsageBar.tsx'
 import { UpdatesPanel } from './panels/UpdatesPanel.tsx'
 import { ProvidersPanel } from './panels/ProvidersPanel.tsx'
 import { PluginsPanel } from './panels/PluginsPanel.tsx'
@@ -51,16 +51,10 @@ export function App(): React.JSX.Element {
     <div className="shell">
       <Sidebar active={panel} onSelect={setPanel} backend={backend} />
       <div className="main">
-        {panel === 'chat' ? (
-          // .main 是纵向 flex（面板要竖着铺），所以会话页得自己套一层横向容器，
-          // 否则右栏会掉到 SPA 下面去
-          <div className="chat-row">
-            <div className="app-slot" ref={slotRef} />
-            {/* 右栏是 slot 的兄弟节点：ResizeObserver 盯的就是 slot，
-                加一列它自然变窄，SPA 的落位不用主进程配合 */}
-            <UsageColumn />
-          </div>
-        ) : null}
+        {/* 顶栏在 slot 上面：SPA 只盖 slot 那块矩形，顶栏露在外面才拖得动窗口。
+            明细展开时 slot 变矮，ResizeObserver 跟着把 SPA 往下挪，不用主进程配合 */}
+        <UsageBar />
+        {panel === 'chat' ? <div className="app-slot" ref={slotRef} /> : null}
         {panel === 'logs' ? <LogsPanel /> : null}
         {panel === 'providers' ? <ProvidersPanel /> : null}
         {panel === 'updates' ? <UpdatesPanel /> : null}
