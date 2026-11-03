@@ -212,6 +212,24 @@ function familyVersionsMatch(root: string, want: string): boolean {
   return true
 }
 
+/**
+ * 认出「其实是断网」的 ETARGET。
+ *
+ * npm 连不上 registry 时不直说：重试用完就回落到本地缓存里那份旧 packument，
+ * 新版本不在里面，于是报 ETARGET「No matching version found」—— 看起来像版本不存在。
+ * 实测日志：三次 `attempt N failed with ECONNREFUSED`，接一条 `GET 200 … (cache stale)`，
+ * 而当时是 .npmrc 里的本机代理没开；版本检测走的是主进程直连，所以照样查得到新版本。
+ */
+function explainFailure(tail: string[]): string | null {
+  const text = tail.join('\n')
+  const net = /failed with (ECONNREFUSED|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN)/.exec(text)
+  if (net === null || !/\bETARGET\b/.test(text)) return null
+  return `npm 连不上 registry（${net[1]}），只能拿本地旧缓存凑数，所以看不到新版本 —— 版本本身是存在的。`
+    + (net[1] === 'ECONNREFUSED'
+      ? '多半是代理没开：~/.npmrc 或下方「代理」里配的地址拒绝连接。开好代理再试，或把代理设成 off 直连。'
+      : '检查网络或代理后再试。')
+}
+
 export function install(version: string, onOutput?: (line: string) => void): Promise<string> {
   const target = stagingRoot()
   const seeded = prepareStaging(!fullReinstallNext, onOutput)
@@ -308,7 +326,8 @@ export function install(version: string, onOutput?: (line: string) => void): Pro
     proc.on('exit', (code) => {
       done()
       if (code !== 0) {
-        reject(new Error(`npm 退出码 ${code}。最后几行：\n${tail.slice(-8).join('\n')}`))
+        const hint = explainFailure(tail)
+        reject(new Error(`${hint === null ? '' : `${hint}\n\n`}npm 退出码 ${code}。最后几行：\n${tail.slice(-8).join('\n')}`))
         return
       }
       const got = readDshVersion(target)
