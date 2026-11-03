@@ -26,12 +26,20 @@ import type { BridgeStatus } from '@shared/ipc'
 
 /** 请求体上限：diff 可能不小，但 2MB 已经远超正常 code review 的量 */
 const MAX_BODY = 2 * 1024 * 1024
-/** 单个任务超时：5 分钟。固定值 —— 不做成配置项 */
 /** 兜底值；正常走 config.bridge.timeoutMs，见 BridgeConfig 上的说明。 */
 const TIMEOUT_MS_FALLBACK = 900_000
 function defaultTimeoutMs(): number {
   const v = loadConfig().bridge.timeoutMs
   return typeof v === 'number' && v > 0 ? v : TIMEOUT_MS_FALLBACK
+}
+
+/**
+ * 调用方传的超时：只能调短，不能调长 —— 面板把配置值当作单任务上限展示。
+ * 0、负数、NaN 会让任务一启动就被掐，Infinity 等于不设超时，都按默认值处理。
+ */
+function requestedTimeoutMs(v: unknown): number {
+  const cap = defaultTimeoutMs()
+  return typeof v === 'number' && Number.isFinite(v) && v > 0 ? Math.min(v, cap) : cap
 }
 /** 并发上限：2。够用，又不至于让一堆任务把机器拖死 */
 const MAX_CONCURRENT = 2
@@ -211,9 +219,11 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
           body: {
             prompt: '必填。要交给 dsh 的任务或问题。',
             cwd: '选填。工作目录绝对路径；dsh 会在这个目录里执行，可读写文件、跑 git 等。',
+            timeoutMs: '选填。毫秒，只能比默认超时短；不合法或超出时按默认值。',
           },
           returns: {
-            text: 'dsh 的回答（最后一条非空 assistant 文本）',
+            text: 'dsh 的回答（最后一条非空 assistant 文本）。为空时即使 exitCode 为 0 也是没拿到回答，'
+              + '应按失败处理 —— 多半是上游返回了空回答，可以原样重试。',
             exitCode: '0 为正常；非零表示任务失败，但 HTTP 仍是 200',
             durationMs: '耗时',
             timedOut: '是否被超时中止',
@@ -238,7 +248,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       notes: [
         '任务失败不用 HTTP 错误码表达 —— 一律 200，看 exitCode 与 text 自己判断。',
         '并发上限 ' + String(MAX_CONCURRENT) + '，超了返回 429。',
-        '默认超时 ' + String(defaultTimeoutMs()) + ' 毫秒。',
+        '默认超时 ' + String(defaultTimeoutMs()) + ' 毫秒，也是上限。',
         'cwd 不限根目录，但必须是真实存在的目录。',
       ],
       runtime: { inflight: runner.inflightCount(), totalServed },
@@ -263,7 +273,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const result = await runner.run({
         prompt: String(body['prompt'] ?? ''),
         cwd: typeof body['cwd'] === 'string' ? body['cwd'] : undefined,
-        timeoutMs: typeof body['timeoutMs'] === 'number' ? body['timeoutMs'] : defaultTimeoutMs(),
+        timeoutMs: requestedTimeoutMs(body['timeoutMs']),
       }, [])
       totalServed += 1
       emit()

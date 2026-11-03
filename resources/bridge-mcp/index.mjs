@@ -134,16 +134,24 @@ async function callBridge(path, body) {
   return parsed
 }
 
-/** 把执行结果拍平成一段文本 —— 非零退出也要如实说明，不能装作成功。 */
+/**
+ * 把执行结果拍平成一段文本 —— 非零退出也要如实说明，不能装作成功。
+ *
+ * 退出码 0 但没有文本同样是失败：headless 只在本轮有 assistant 文本时才写 stdout，
+ * 上游回了空答案（实测：只发心跳、十分钟后回一个空推理块）时它照样以 0 退出。
+ */
 function renderResult(r) {
   const lines = []
   if (r.text) lines.push(r.text)
-  if (r.timedOut) lines.push('\n[任务超时被中止，以上是超时前的输出]')
-  else if (r.exitCode !== 0) {
+  if (r.timedOut) {
+    lines.push(r.text ? '\n[任务超时被中止，以上是超时前的输出]' : '[任务超时被中止，中止前没有任何输出]')
+  } else if (r.exitCode !== 0) {
     lines.push(`\n[dsh 以退出码 ${r.exitCode} 结束]`)
     if (r.stderrTail) lines.push(`[stderr 尾部]\n${r.stderrTail}`)
+  } else if (!r.text) {
+    lines.push('[dsh 正常结束，但模型没有给出文字回答 —— 多半是上游返回了空回答，可以原样重试]')
+    if (r.stderrTail) lines.push(`[stderr 尾部]\n${r.stderrTail}`)
   }
-  if (lines.length === 0) lines.push('[dsh 没有产生任何输出]')
   return lines.join('\n')
 }
 
@@ -183,7 +191,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       .then((r) => {
         reply(id, {
           content: [{ type: 'text', text: renderResult(r) }],
-          isError: r.exitCode !== 0 || r.timedOut === true,
+          isError: r.exitCode !== 0 || r.timedOut === true || !r.text,
         })
       })
       .catch((e) => { fail(id, e instanceof Error ? e.message : String(e)) })

@@ -93,7 +93,12 @@ export function run(req: RunRequest, allowedRoots: readonly string[]): Promise<R
 
     let out = ''
     let err = ''
+    // headless 的 stdout 只在退出时写一次最终答案，跑的过程中恒为 0 字节；
+    // 推理增量是实时流进 stderr 的（`dsh: reasoning:` 段），进度要看 stderr 的动静
+    let errBytes = 0
+    let lastErrAt = 0
     let timedOut = false
+    const secs = (ms: number): string => String(Math.round(ms / 1000))
     const timer = setTimeout(() => {
       timedOut = true
       try { proc.kill('SIGTERM') } catch { /* 已退出 */ }
@@ -102,14 +107,19 @@ export function run(req: RunRequest, allowedRoots: readonly string[]): Promise<R
     }, timeoutMs)
 
     // 一次真实任务能跑七八分钟，中间一声不吭 —— 日志里加个心跳，
-    // 否则「还在跑」和「卡死了」在事后完全分不出来
+    // 否则「还在跑」和「卡死了」在事后完全分不出来。
+    // 实测卡死的样子：上游只发 SSE 心跳注释、一个推理字都不吐，dsh 的空闲看门狗被心跳续着
+    // 不触发，十分钟后回一个空答案 —— 这时「距上次输出」会一直涨
     const beat = setInterval(() => {
-      log(`桥接任务进行中：已 ${String(Math.round((Date.now() - started) / 1000))}s`
-        + `，已收到 ${String(out.length)} 字节`)
+      const now = Date.now()
+      log(`桥接任务进行中：已 ${secs(now - started)}s，推理输出 ${String(errBytes)} 字节，`
+        + (lastErrAt === 0 ? '尚无输出' : `距上次输出 ${secs(now - lastErrAt)}s`))
     }, 60_000)
 
     proc.stdout?.on('data', (d: Buffer) => { out += d.toString() })
     proc.stderr?.on('data', (d: Buffer) => {
+      errBytes += d.length
+      lastErrAt = Date.now()
       err += d.toString()
       if (err.length > 8_000) err = err.slice(-8_000)
     })
@@ -123,8 +133,13 @@ export function run(req: RunRequest, allowedRoots: readonly string[]): Promise<R
       // 带上 signal：dsh 收到 SIGTERM 后是干净退出的（code=0），
       // 只看 code 会把「被掐断」误读成「成功」
       log(`桥接任务结束：code=${code ?? 'null'} signal=${signal ?? '无'} `
-        + `用时 ${String(Math.round(durationMs / 1000))}s`
-        + (timedOut ? `（超时被掐，上限 ${String(Math.round(timeoutMs / 1000))}s）` : ''))
+        + `用时 ${secs(durationMs)}s`
+        + (timedOut ? `（超时被掐，上限 ${secs(timeoutMs)}s）` : ''))
+      // headless 只在本轮有 assistant 文本时才往 stdout 写；全程只有推理和工具调用、
+      // 最后一步又是空回答时，它照样以 0 退出
+      if (code === 0 && !timedOut && out.trim() === '') {
+        log('桥接任务没有文字回答：dsh 正常结束，但模型最后没给出文本（多半是上游返回了空回答）', 'stderr')
+      }
       resolve({
         text: out.trim(),
         exitCode: code ?? -1,

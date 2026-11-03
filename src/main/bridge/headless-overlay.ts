@@ -9,8 +9,8 @@
  *   · 模型选择从全局 `~/.dsh/settings.yaml` 挪进了各 profile 的 `cordis.patch.yml`。
  *     headless 的 patch 是空的，于是它跑 dsh-base 的默认模型，不再跟着聊天走。
  *
- * 所以每次任务前，按 dsh 的层序算出聊天那边模型路由相关几行的生效值，再加上
- * 恢复存储认证的几行，写成一份 overlay 交给 `--patch`。用户的 `~/.dsh` 一个字节不动。
+ * 所以每次任务前，按 dsh 的层序算出聊天那边模型路由（和会话日志开关）相关几行的生效值，
+ * 再加上恢复存储认证的几行，写成一份 overlay 交给 `--patch`。用户的 `~/.dsh` 一个字节不动。
  */
 import { app } from 'electron'
 import { existsSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
@@ -23,7 +23,7 @@ import { dshHome } from '../catalog/settings.ts'
 export const CHAT_PROFILE = 'web'
 
 /**
- * 从聊天那边抄过来的行：模型选择、各条模型路由、平台账号。
+ * 从聊天那边抄过来的行：模型选择、各条模型路由、平台账号、会话日志上传开关。
  *
  * 只抄 `config` 与 `disabled`，**不抄 `name`**：旧版 patch 里可能还留着上一代的
  * 插件名（比如 `llm-deepseek` 指向 `@deepseek-ai/dsh-llm-deepseek`），抄过去会把
@@ -32,6 +32,10 @@ export const CHAT_PROFILE = 'web'
  * `deepseek-account` 必须跟着抄：账号插件启动时，如果已存授权的签发方和
  * `platformOrigin` 对不上，会**直接删掉本地登录**。聊天那边若改过
  * `platformOrigin`，headless 用默认值一启动就会把用户登出。
+ *
+ * `session-log-deepseek` 是隐私开关（设置 → 通用 →「在使用官方模型 API 时上传 Session Log」，
+ * 写进 web profile 的 patch）：开着时每次请求都把整段会话日志 —— 包括工具读到的文件内容 ——
+ * 带给 DeepSeek 官方 API，默认开。聊天里关了，桥接不能自己照传。
  */
 const SYNC_IDS: ReadonlySet<string> = new Set([
   'agent-default-model',
@@ -39,6 +43,7 @@ const SYNC_IDS: ReadonlySet<string> = new Set([
   'llm-deepseek',
   'llm-deepseek-account',
   'deepseek-account',
+  'session-log-deepseek',
 ])
 
 /** headless bundle 关掉、而桥接一定要用的两行。 */

@@ -72,7 +72,7 @@ export function BridgePanel(): React.JSX.Element {
           </button>
         </div>
         <div className="muted hint">
-          零配置：模型与凭据跟着聊天走 —— 每次任务把聊天 profile 的模型路由交给 headless，
+          零配置：模型与凭据跟着聊天走 —— 每次任务把聊天 profile 的模型路由和 Session Log 上传开关交给 headless，
           并打开凭据库与平台登录，API key 和账号登录都能用。
           <br />
           <b>默认关闭</b>。启用后只绑 <span className="mono">127.0.0.1</span>、拒绝浏览器来源的请求、
